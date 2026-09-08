@@ -1,1 +1,69 @@
-@import "tailwindcss";
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo',
+    sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+  --color-canvas: #f4f6fb;
+  --color-surface: #ffffff;
+  --color-subtle: #f5f7fc;
+  --color-ink: #1b2135;
+  --color-body: #3b4257;
+  --color-muted: #5c6479;
+  --color-faint: #9198ac;
+  --color-line: #e4e7f0;
+  --color-input: #cfd4e1;
+  --color-primary: #3b4cca;
+  --color-primary-hover: #2c3a99;
+  --color-primary-border: #3040a8;
+  --color-neutral: #565d72;
+  --color-neutral-bg: #eef0f6;
+  --color-neutral-border: #d2d7e3;
+  --color-info: #3c6da8;
+  --color-info-bg: #eaf0f8;
+  --color-info-border: #c4d5ea;
+  --color-success: #3d7a50;
+  --color-success-bg: #eaf3ec;
+  --color-success-border: #c4dccb;
+  --color-warning: #a2661c;
+  --color-warning-bg: #f9efdb;
+  --color-warning-border: #e5ca94;
+  --color-danger: #a34a42;
+  --color-danger-bg: #f9eae8;
+  --color-danger-border: #e2b6b0;
+  --color-accent: #2c3a99;
+  --color-accent-bg: #e8ebfb;
+  --color-accent-border: #c6cef0;
+  --shadow-dialog: 0 14px 40px rgb(30 25 5 / 18%);
+}
+
+@layer base {
+  body {
+    @apply m-0 min-w-80 bg-canvas font-sans text-[13.5px] text-ink antialiased;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+  button:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+  }
+  ::placeholder {
+    color: var(--color-faint);
+  }
+  a {
+    @apply text-primary hover:text-primary-hover;
+  }
+  dialog::backdrop {
+    background: rgb(30 26 12 / 40%);
+  }
+}
