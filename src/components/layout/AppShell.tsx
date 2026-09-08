@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react'
+import logo from '../../assets/logo.png'
 import { cn } from '../../lib/cn'
 export function Brand({ name = '서비스명' }: { name?: string }) {
   return (
     <span className="inline-flex items-center gap-2.5 font-extrabold">
-      <span
-        aria-hidden="true"
-        className="flex size-[26px] items-center justify-center rounded-lg border border-primary-border bg-primary text-white"
-      >
-        ◆
-      </span>
+      <img
+        src={logo}
+        alt=""
+        width={32}
+        height={32}
+        className="size-8 shrink-0 object-contain"
+      />
       {name}
     </span>
   )
