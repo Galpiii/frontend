@@ -15,3 +15,20 @@ export function getApiUrl(path: string) {
   }
   return url.href
 }
+
+/**
+ * Reads the backend's `{ data }` envelope. A response body is untrusted, so a
+ * caller declares the shape it needs and anything else becomes a rejection
+ * instead of reaching the screen. HTTP status stays the caller's concern:
+ * each one maps failures onto its own error type.
+ */
+export async function readData<T>(
+  response: Response,
+  isValid: (value: unknown) => value is T,
+  invalidMessage: string,
+): Promise<T> {
+  const body: unknown = await response.json().catch(() => null)
+  const data = (body as { data?: unknown } | null)?.data
+  if (!isValid(data)) throw new Error(invalidMessage)
+  return data
+}

@@ -9,27 +9,57 @@ import {
   SectionHeader,
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
-import { API_PATHS } from '../lib/api'
+import { API_PATHS, readData } from '../lib/api'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 interface Project {
   id: number
   name: string
-  status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED'
+  status: string
   repositoryCount: number
   hasSpecDocument: boolean
   updatedAt: string
 }
 interface ProjectList {
   projects: Project[]
-  page: number
   totalPages: number
 }
-const statuses = {
+
+const statusLabels: Record<string, string> = {
   DRAFT: '초안',
   ACTIVE: '진행 중',
   ARCHIVED: '보관됨',
-} as const
+}
+
+function isProject(value: unknown): value is Project {
+  if (typeof value !== 'object' || value === null) return false
+  const project = value as Record<string, unknown>
+  return (
+    typeof project.id === 'number' &&
+    typeof project.name === 'string' &&
+    // A status the backend adds later is shown as-is, not treated as invalid.
+    typeof project.status === 'string' &&
+    typeof project.repositoryCount === 'number' &&
+    typeof project.hasSpecDocument === 'boolean' &&
+    typeof project.updatedAt === 'string'
+  )
+}
+
+function isProjectList(value: unknown): value is ProjectList {
+  if (typeof value !== 'object' || value === null) return false
+  const list = value as Record<string, unknown>
+  return (
+    Array.isArray(list.projects) &&
+    list.projects.every(isProject) &&
+    Number.isInteger(list.totalPages)
+  )
+}
+
+/** An unparseable timestamp must not render as "Invalid Date". */
+function formatDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString('ko-KR')
+}
 
 export function ProjectsPage() {
   useDocumentTitle('프로젝트')
@@ -48,13 +78,12 @@ export function ProjectsPage() {
           { signal: controller.signal },
         )
         if (!response.ok) throw new Error('Project list request failed')
-        const body = await response.json()
-        if (
-          !Array.isArray(body?.data?.projects) ||
-          !Number.isInteger(body.data.totalPages)
+        const data = await readData(
+          response,
+          isProjectList,
+          'Invalid project list',
         )
-          throw new Error('Invalid project list')
-        if (!controller.signal.aborted) setResult(body.data)
+        if (!controller.signal.aborted) setResult(data)
       } catch (cause) {
         if (controller.signal.aborted) return
         // AuthProvider is told about the expiry by session.ts; this screen
@@ -136,7 +165,7 @@ export function ProjectsPage() {
                     <Badge
                       tone={project.status === 'ACTIVE' ? 'success' : 'neutral'}
                     >
-                      {statuses[project.status] ?? project.status}
+                      {statusLabels[project.status] ?? project.status}
                     </Badge>
                   </div>
                   <p className="text-[13px] text-muted">
@@ -152,8 +181,7 @@ export function ProjectsPage() {
                     </Badge>
                   </div>
                   <p className="mt-auto text-xs text-faint">
-                    최근 수정{' '}
-                    {new Date(project.updatedAt).toLocaleDateString('ko-KR')}
+                    최근 수정 {formatDate(project.updatedAt)}
                   </p>
                 </Card>
               ))}
