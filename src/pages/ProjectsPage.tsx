@@ -10,6 +10,7 @@ import {
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS } from '../lib/api'
+import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 interface Project {
   id: number
@@ -31,6 +32,7 @@ const statuses = {
 } as const
 
 export function ProjectsPage() {
+  useDocumentTitle('프로젝트')
   const [page, setPage] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<ProjectList | null>(null)

@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { BrowserRouter } from 'react-router'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './auth/AuthProvider'
@@ -12,8 +13,10 @@ const session = initializeSession(
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthProvider session={session}>
-      <App />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider session={session}>
+        <App />
+      </AuthProvider>
+    </BrowserRouter>
   </StrictMode>,
 )

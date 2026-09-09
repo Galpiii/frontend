@@ -3,10 +3,15 @@ import { Brand } from '../components/layout'
 import { GitHubLoginButton } from '../components/auth/GitHubLoginButton'
 import { ResultPreview } from '../components/landing/ResultPreview'
 import { API_PATHS, getApiUrl } from '../lib/api'
+import { useAuth } from '../auth/AuthContext'
+import { useDocumentTitle } from '../lib/useDocumentTitle'
 
-export function LandingPage({ authError }: { authError?: string }) {
+export function LandingPage() {
+  const auth = useAuth()
+  const authError = auth.status === 'unauthenticated' ? auth.error : undefined
   const [loading, setLoading] = useState(false)
   const [loginError, setLoginError] = useState('')
+  useDocumentTitle('프로젝트의 갈피를 잡으세요')
 
   useEffect(() => {
     const resetLogin = () => setLoading(false)
