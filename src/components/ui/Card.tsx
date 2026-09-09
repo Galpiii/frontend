@@ -15,15 +15,21 @@ export function SectionHeader({
   title,
   description,
   action,
+  level = 2,
 }: {
   title: string
   description?: ReactNode
   action?: ReactNode
+  /** Pick the level that fits the page outline; the size stays the same. */
+  level?: 1 | 2 | 3
 }) {
+  const Heading = `h${level}` as const
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
-        <h2 className="text-[22px] font-extrabold tracking-[-.4px]">{title}</h2>
+        <Heading className="text-[22px] font-extrabold tracking-[-.4px]">
+          {title}
+        </Heading>
         {description && (
           <p className="mt-1 text-[13.5px] leading-relaxed text-muted">
             {description}

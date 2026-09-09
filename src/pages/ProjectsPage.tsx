@@ -82,6 +82,7 @@ export function ProjectsPage({
     <AppShell header={<AppHeader context="프로젝트" />}>
       <div className="mx-auto max-w-[1120px] space-y-5 py-1 sm:py-2">
         <SectionHeader
+          level={1}
           title="프로젝트"
           description="프로젝트와 최근 상태를 한곳에서 확인하세요."
           action={
@@ -122,6 +123,7 @@ export function ProjectsPage({
           </Alert>
         ) : result?.projects.length === 0 ? (
           <EmptyState
+            level={2}
             title="아직 프로젝트가 없습니다"
             description="기능명세서와 GitHub 저장소를 연결해 기능별 개발 작업을 확인할 수 있습니다."
           />
