@@ -30,11 +30,7 @@ const statuses = {
   ARCHIVED: '보관됨',
 } as const
 
-export function ProjectsPage({
-  onSessionExpired,
-}: {
-  onSessionExpired: () => void
-}) {
+export function ProjectsPage() {
   const [page, setPage] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<ProjectList | null>(null)
@@ -59,10 +55,9 @@ export function ProjectsPage({
         if (!controller.signal.aborted) setResult(body.data)
       } catch (cause) {
         if (controller.signal.aborted) return
-        if (cause instanceof SessionError && cause.status === 401) {
-          onSessionExpired()
-          return
-        }
+        // AuthProvider is told about the expiry by session.ts; this screen
+        // is about to unmount, so it must not flash a request error first.
+        if (cause instanceof SessionError && cause.status === 401) return
         setError('프로젝트 목록을 불러오지 못했습니다. 다시 시도해주세요.')
       } finally {
         if (!controller.signal.aborted) setLoading(false)
@@ -70,7 +65,7 @@ export function ProjectsPage({
     }
     void loadProjects()
     return () => controller.abort()
-  }, [page, attempt, onSessionExpired])
+  }, [page, attempt])
 
   function changePage(next: number) {
     setLoading(true)

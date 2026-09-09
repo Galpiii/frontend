@@ -12,6 +12,25 @@ function withTimeout(signal?: AbortSignal | null) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
 
+const unauthorizedListeners = new Set<() => void>()
+
+/**
+ * Fires when a session that was already established is rejected. The initial
+ * bootstrap restore is excluded: a logged-out first visit is not an expiry.
+ */
+export function onUnauthorized(listener: () => void) {
+  unauthorizedListeners.add(listener)
+  return () => {
+    unauthorizedListeners.delete(listener)
+  }
+}
+
+function expireSession() {
+  accessToken = null
+  expiresAt = 0
+  for (const listener of unauthorizedListeners) listener()
+}
+
 export class SessionError extends Error {
   status: number
   constructor(status: number) {
@@ -66,7 +85,15 @@ export function restoreSession() {
 }
 
 export async function authenticatedFetch(path: string, init: RequestInit = {}) {
-  if (!accessToken || expiresAt <= Date.now() + 10_000) await restoreSession()
+  if (!accessToken || expiresAt <= Date.now() + 10_000) {
+    try {
+      await restoreSession()
+    } catch (error) {
+      // Only a rejected session is an expiry; a 5xx stays a request failure.
+      if (error instanceof SessionError && error.status === 401) expireSession()
+      throw error
+    }
+  }
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${accessToken}`)
   // No automatic replay of mutations: avoid creating a project twice.
@@ -77,8 +104,7 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}) {
     signal: withTimeout(init.signal),
   })
   if (response.status === 401) {
-    accessToken = null
-    expiresAt = 0
+    expireSession()
     throw new SessionError(401)
   }
   return response

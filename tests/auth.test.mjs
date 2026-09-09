@@ -184,3 +184,34 @@ test('every authenticated request is bounded by a timeout and still honors calle
   controller.abort()
   assert.equal(requestSignal.aborted, true)
 })
+
+test('an expired session notifies subscribers, but a logged-out first visit does not', async (t) => {
+  const { initializeSession, authenticatedFetch, onUnauthorized, SessionError } =
+    await modules(t)
+  let expiries = 0
+  const unsubscribe = onUnauthorized(() => {
+    expiries++
+  })
+  const responses = [
+    new Response('', { status: 401 }), // first visit: no refresh cookie yet
+    Response.json(tokenBody), // login exchange
+    new Response('', { status: 401 }), // the established session is rejected
+  ]
+  t.mock.method(globalThis, 'fetch', async () => responses.shift())
+
+  assert.equal(
+    (await initializeSession({ code: null, failed: false })).authenticated,
+    false,
+  )
+  assert.equal(expiries, 0)
+
+  await initializeSession({ code: 'fixture-code', failed: false })
+  await assert.rejects(authenticatedFetch('/projects'), SessionError)
+  assert.equal(expiries, 1)
+
+  // A refresh rejected mid-session counts once, and unsubscribing stops it.
+  unsubscribe()
+  responses.push(new Response('', { status: 401 }))
+  await assert.rejects(authenticatedFetch('/projects'), SessionError)
+  assert.equal(expiries, 1)
+})
