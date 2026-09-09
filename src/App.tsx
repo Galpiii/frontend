@@ -1,4 +1,5 @@
 import { Navigate, Outlet, Route, Routes } from 'react-router'
+import { ComponentPreview } from './pages/ComponentPreview'
 import { LandingPage } from './pages/LandingPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { ProjectsPage } from './pages/ProjectsPage'
@@ -46,6 +47,10 @@ export default function App() {
         their project list or back to sign-in.
       */}
       <Route path="/auth/callback" element={<Navigate to="/" replace />} />
+      {/* Component gallery for development; dropped from the production build. */}
+      {import.meta.env.DEV && (
+        <Route path="/preview" element={<ComponentPreview />} />
+      )}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )
