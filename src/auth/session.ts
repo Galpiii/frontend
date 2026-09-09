@@ -1,8 +1,16 @@
 import { API_PATHS, getApiUrl } from '../lib/api.ts'
 
+const REQUEST_TIMEOUT_MS = 15_000
+
 let accessToken: string | null = null
 let expiresAt = 0
 let refreshRequest: Promise<void> | null = null
+
+/** Every backend call is bounded; a caller's own signal still aborts first. */
+function withTimeout(signal?: AbortSignal | null) {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
 
 export class SessionError extends Error {
   status: number
@@ -17,7 +25,7 @@ async function receiveToken(path: string, code?: string) {
     method: 'POST',
     credentials: 'include',
     cache: 'no-store',
-    signal: AbortSignal.timeout(15_000),
+    signal: withTimeout(),
     headers: { 'Content-Type': 'application/json', 'X-Galpi-Request': 'true' },
     ...(code !== undefined ? { body: JSON.stringify({ code }) } : {}),
   })
@@ -66,6 +74,7 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}) {
     ...init,
     headers,
     credentials: 'include',
+    signal: withTimeout(init.signal),
   })
   if (response.status === 401) {
     accessToken = null

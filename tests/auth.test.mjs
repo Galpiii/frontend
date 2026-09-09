@@ -165,3 +165,22 @@ test('a project mutation returning 401 is not automatically replayed', async (t)
   )
   assert.equal(calls, 2)
 })
+
+test('every authenticated request is bounded by a timeout and still honors caller aborts', async (t) => {
+  const { initializeSession, authenticatedFetch } = await modules(t)
+  const signals = []
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    signals.push(init.signal)
+    return Response.json(tokenBody)
+  })
+  await initializeSession({ code: 'fixture-code', failed: false })
+  const controller = new AbortController()
+  await authenticatedFetch('/projects', { signal: controller.signal })
+  assert.equal(signals.length, 2)
+  assert.ok(signals.every((signal) => signal instanceof AbortSignal))
+  const [tokenSignal, requestSignal] = signals
+  assert.equal(tokenSignal.aborted, false)
+  assert.notEqual(requestSignal, controller.signal)
+  controller.abort()
+  assert.equal(requestSignal.aborted, true)
+})
