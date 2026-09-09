@@ -81,9 +81,9 @@ export function ComponentPreview() {
             </Button>
             <Button
               variant="dark"
-              onClick={() => setToast('샘플 프로젝트를 선택했습니다.')}
+              onClick={() => setToast('강조 버튼을 눌렀습니다.')}
             >
-              샘플 프로젝트 둘러보기
+              강조 버튼
             </Button>
             <Button
               variant="danger"

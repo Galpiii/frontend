@@ -1,9 +1,20 @@
 import type { ReactNode } from 'react'
 import logo from '../../assets/logo.png'
 import { cn } from '../../lib/cn'
-export function Brand({ name = '서비스명' }: { name?: string }) {
+export function Brand({
+  name = '갈피',
+  size = 'header',
+}: {
+  name?: string
+  size?: 'header' | 'landing'
+}) {
   return (
-    <span className="inline-flex items-center gap-2.5 font-extrabold">
+    <span
+      className={cn(
+        'inline-flex items-center gap-2 font-extrabold tracking-[-0.5px] text-ink',
+        size === 'landing' ? 'text-[22px]' : 'text-[18px]',
+      )}
+    >
       <img
         src={logo}
         alt=""
