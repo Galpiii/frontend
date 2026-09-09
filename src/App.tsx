@@ -16,7 +16,8 @@ function RequireAuth() {
 /** Sign-in screens; a signed-in visitor belongs on their project list. */
 function GuestOnly() {
   const auth = useAuth()
-  if (auth.status === 'authenticated') return <Navigate to="/projects" replace />
+  if (auth.status === 'authenticated')
+    return <Navigate to="/projects" replace />
   return <Outlet />
 }
 

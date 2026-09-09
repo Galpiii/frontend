@@ -1,0 +1,6 @@
+dist
+node_modules
+package-lock.json
+
+# GitHub-owned templates: their frontmatter is not ours to restyle.
+.github

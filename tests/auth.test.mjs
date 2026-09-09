@@ -186,8 +186,12 @@ test('every authenticated request is bounded by a timeout and still honors calle
 })
 
 test('an expired session notifies subscribers, but a logged-out first visit does not', async (t) => {
-  const { initializeSession, authenticatedFetch, onUnauthorized, SessionError } =
-    await modules(t)
+  const {
+    initializeSession,
+    authenticatedFetch,
+    onUnauthorized,
+    SessionError,
+  } = await modules(t)
   let expiries = 0
   const unsubscribe = onUnauthorized(() => {
     expiries++

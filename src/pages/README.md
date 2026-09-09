@@ -9,13 +9,13 @@
 
 `main.tsx` mounts `BrowserRouter` outside `AuthProvider`, and `App.tsx` declares the routes:
 
-| Path | Screen | Guard |
-| --- | --- | --- |
-| `/` | `LandingPage` | `GuestOnly` — a signed-in visitor is sent to `/projects` |
-| `/projects` | `ProjectsPage` | `RequireAuth` — a signed-out visitor is sent to `/` |
-| `/auth/callback` | redirect to `/` | the guards forward from there |
-| `/preview` | `ComponentPreview` | dev builds only |
-| `*` | `NotFoundPage` | — |
+| Path             | Screen             | Guard                                                    |
+| ---------------- | ------------------ | -------------------------------------------------------- |
+| `/`              | `LandingPage`      | `GuestOnly` — a signed-in visitor is sent to `/projects` |
+| `/projects`      | `ProjectsPage`     | `RequireAuth` — a signed-out visitor is sent to `/`      |
+| `/auth/callback` | redirect to `/`    | the guards forward from there                            |
+| `/preview`       | `ComponentPreview` | dev builds only                                          |
+| `*`              | `NotFoundPage`     | —                                                        |
 
 While auth is still resolving, `App` renders a loading screen instead of the route tree, so a guard never decides on an unknown session. Each screen sets its own tab title with `useDocumentTitle`. Add authenticated screens as children of the `RequireAuth` route; they need no sign-in wiring of their own.
 

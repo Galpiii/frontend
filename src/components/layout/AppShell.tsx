@@ -70,9 +70,8 @@ export function Sidebar({
       >
         {items.map((item) => {
           const shared = {
-            'aria-current': (activeId === item.id
-              ? 'page'
-              : undefined) as 'page' | undefined,
+            'aria-current': (activeId === item.id ? 'page' : undefined) as
+              'page' | undefined,
             className: cn(
               'flex items-center gap-2 whitespace-nowrap border-l-[3px] px-5 py-2.5 text-[13.5px]',
               activeId === item.id
