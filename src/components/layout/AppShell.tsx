@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Link } from 'react-router'
 import logo from '../../assets/logo.png'
 import { cn } from '../../lib/cn'
 export function Brand({
@@ -67,22 +68,31 @@ export function Sidebar({
         aria-label="프로젝트 메뉴"
         className="flex overflow-x-auto md:flex-col"
       >
-        {items.map((item) => (
-          <a
-            key={item.id}
-            href={item.href}
-            aria-current={activeId === item.id ? 'page' : undefined}
-            className={cn(
+        {items.map((item) => {
+          const shared = {
+            'aria-current': (activeId === item.id ? 'page' : undefined) as
+              'page' | undefined,
+            className: cn(
               'flex items-center gap-2 whitespace-nowrap border-l-[3px] px-5 py-2.5 text-[13.5px]',
               activeId === item.id
                 ? 'border-primary bg-accent-bg font-extrabold text-primary'
                 : 'border-transparent text-muted hover:bg-neutral-bg',
-            )}
-          >
-            <span aria-hidden="true">{item.icon}</span>
-            {item.label}
-          </a>
-        ))}
+            ),
+            children: (
+              <>
+                <span aria-hidden="true">{item.icon}</span>
+                {item.label}
+              </>
+            ),
+          }
+          // An in-page fragment stays a native anchor so the browser scrolls to
+          // the target; a route goes through Link to avoid a full reload.
+          return item.href.startsWith('#') ? (
+            <a key={item.id} href={item.href} {...shared} />
+          ) : (
+            <Link key={item.id} to={item.href} {...shared} />
+          )
+        })}
       </nav>
       {footer && (
         <div className="mt-auto hidden border-t border-line px-5 py-3 text-xs leading-loose text-muted md:block">

@@ -34,12 +34,16 @@ export function EmptyState({
   description,
   action,
   icon = '◆',
+  level = 3,
 }: {
   title: string
   description: string
   action?: ReactNode
   icon?: ReactNode
+  /** Pick the level that fits the page outline; the size stays the same. */
+  level?: 2 | 3 | 4
 }) {
+  const Heading = `h${level}` as const
   return (
     <div className="flex flex-col items-center gap-3 rounded-[14px] border border-dashed border-accent-border bg-subtle px-6 py-9 text-center">
       <span
@@ -48,7 +52,7 @@ export function EmptyState({
       >
         {icon}
       </span>
-      <h3 className="text-[15px] font-extrabold">{title}</h3>
+      <Heading className="text-[15px] font-extrabold">{title}</Heading>
       <p className="max-w-lg text-[13px] leading-relaxed text-muted">
         {description}
       </p>

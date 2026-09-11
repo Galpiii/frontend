@@ -9,32 +9,60 @@ import {
   SectionHeader,
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
-import { API_PATHS } from '../lib/api'
+import { API_PATHS, readData } from '../lib/api'
+import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 interface Project {
   id: number
   name: string
-  status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED'
+  status: string
   repositoryCount: number
   hasSpecDocument: boolean
   updatedAt: string
 }
 interface ProjectList {
   projects: Project[]
-  page: number
   totalPages: number
 }
-const statuses = {
+
+const statusLabels: Record<string, string> = {
   DRAFT: '초안',
   ACTIVE: '진행 중',
   ARCHIVED: '보관됨',
-} as const
+}
 
-export function ProjectsPage({
-  onSessionExpired,
-}: {
-  onSessionExpired: () => void
-}) {
+function isProject(value: unknown): value is Project {
+  if (typeof value !== 'object' || value === null) return false
+  const project = value as Record<string, unknown>
+  return (
+    typeof project.id === 'number' &&
+    typeof project.name === 'string' &&
+    // A status the backend adds later is shown as-is, not treated as invalid.
+    typeof project.status === 'string' &&
+    typeof project.repositoryCount === 'number' &&
+    typeof project.hasSpecDocument === 'boolean' &&
+    typeof project.updatedAt === 'string'
+  )
+}
+
+function isProjectList(value: unknown): value is ProjectList {
+  if (typeof value !== 'object' || value === null) return false
+  const list = value as Record<string, unknown>
+  return (
+    Array.isArray(list.projects) &&
+    list.projects.every(isProject) &&
+    Number.isInteger(list.totalPages)
+  )
+}
+
+/** An unparseable timestamp must not render as "Invalid Date". */
+function formatDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString('ko-KR')
+}
+
+export function ProjectsPage() {
+  useDocumentTitle('프로젝트')
   const [page, setPage] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<ProjectList | null>(null)
@@ -50,19 +78,17 @@ export function ProjectsPage({
           { signal: controller.signal },
         )
         if (!response.ok) throw new Error('Project list request failed')
-        const body = await response.json()
-        if (
-          !Array.isArray(body?.data?.projects) ||
-          !Number.isInteger(body.data.totalPages)
+        const data = await readData(
+          response,
+          isProjectList,
+          'Invalid project list',
         )
-          throw new Error('Invalid project list')
-        if (!controller.signal.aborted) setResult(body.data)
+        if (!controller.signal.aborted) setResult(data)
       } catch (cause) {
         if (controller.signal.aborted) return
-        if (cause instanceof SessionError && cause.status === 401) {
-          onSessionExpired()
-          return
-        }
+        // AuthProvider is told about the expiry by session.ts; this screen
+        // is about to unmount, so it must not flash a request error first.
+        if (cause instanceof SessionError && cause.status === 401) return
         setError('프로젝트 목록을 불러오지 못했습니다. 다시 시도해주세요.')
       } finally {
         if (!controller.signal.aborted) setLoading(false)
@@ -70,7 +96,7 @@ export function ProjectsPage({
     }
     void loadProjects()
     return () => controller.abort()
-  }, [page, attempt, onSessionExpired])
+  }, [page, attempt])
 
   function changePage(next: number) {
     setLoading(true)
@@ -82,6 +108,7 @@ export function ProjectsPage({
     <AppShell header={<AppHeader context="프로젝트" />}>
       <div className="mx-auto max-w-[1120px] space-y-5 py-1 sm:py-2">
         <SectionHeader
+          level={1}
           title="프로젝트"
           description="프로젝트와 최근 상태를 한곳에서 확인하세요."
           action={
@@ -122,6 +149,7 @@ export function ProjectsPage({
           </Alert>
         ) : result?.projects.length === 0 ? (
           <EmptyState
+            level={2}
             title="아직 프로젝트가 없습니다"
             description="기능명세서와 GitHub 저장소를 연결해 기능별 개발 작업을 확인할 수 있습니다."
           />
@@ -137,7 +165,7 @@ export function ProjectsPage({
                     <Badge
                       tone={project.status === 'ACTIVE' ? 'success' : 'neutral'}
                     >
-                      {statuses[project.status] ?? project.status}
+                      {statusLabels[project.status] ?? project.status}
                     </Badge>
                   </div>
                   <p className="text-[13px] text-muted">
@@ -153,8 +181,7 @@ export function ProjectsPage({
                     </Badge>
                   </div>
                   <p className="mt-auto text-xs text-faint">
-                    최근 수정{' '}
-                    {new Date(project.updatedAt).toLocaleDateString('ko-KR')}
+                    최근 수정 {formatDate(project.updatedAt)}
                   </p>
                 </Card>
               ))}

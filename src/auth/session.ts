@@ -1,8 +1,35 @@
-import { API_PATHS, getApiUrl } from '../lib/api.ts'
+import { API_PATHS, getApiUrl, readData } from '../lib/api.ts'
+
+const REQUEST_TIMEOUT_MS = 15_000
 
 let accessToken: string | null = null
 let expiresAt = 0
 let refreshRequest: Promise<void> | null = null
+
+/** Every backend call is bounded; a caller's own signal still aborts first. */
+function withTimeout(signal?: AbortSignal | null) {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
+
+const unauthorizedListeners = new Set<() => void>()
+
+/**
+ * Fires when a session that was already established is rejected. The initial
+ * bootstrap restore is excluded: a logged-out first visit is not an expiry.
+ */
+export function onUnauthorized(listener: () => void) {
+  unauthorizedListeners.add(listener)
+  return () => {
+    unauthorizedListeners.delete(listener)
+  }
+}
+
+function expireSession() {
+  accessToken = null
+  expiresAt = 0
+  for (const listener of unauthorizedListeners) listener()
+}
 
 export class SessionError extends Error {
   status: number
@@ -12,29 +39,42 @@ export class SessionError extends Error {
   }
 }
 
+interface AccessToken {
+  accessToken: string
+  tokenType: 'Bearer'
+  expiresIn: number
+}
+
+function isAccessToken(value: unknown): value is AccessToken {
+  if (typeof value !== 'object' || value === null) return false
+  const token = value as Record<string, unknown>
+  return (
+    typeof token.accessToken === 'string' &&
+    token.accessToken.length > 0 &&
+    token.tokenType === 'Bearer' &&
+    typeof token.expiresIn === 'number' &&
+    Number.isFinite(token.expiresIn) &&
+    token.expiresIn > 0
+  )
+}
+
 async function receiveToken(path: string, code?: string) {
   const response = await fetch(getApiUrl(path), {
     method: 'POST',
     credentials: 'include',
     cache: 'no-store',
-    signal: AbortSignal.timeout(15_000),
+    signal: withTimeout(),
     headers: { 'Content-Type': 'application/json', 'X-Galpi-Request': 'true' },
     ...(code !== undefined ? { body: JSON.stringify({ code }) } : {}),
   })
   if (!response.ok) throw new SessionError(response.status)
-  const body = await response.json()
-  const data = body?.data
-  if (
-    typeof data?.accessToken !== 'string' ||
-    !data.accessToken ||
-    data.tokenType !== 'Bearer' ||
-    !Number.isFinite(data.expiresIn) ||
-    data.expiresIn <= 0
-  ) {
-    throw new Error('로그인 응답을 확인할 수 없습니다. 다시 로그인해주세요.')
-  }
-  accessToken = data.accessToken
-  expiresAt = Date.now() + data.expiresIn * 1000
+  const token = await readData(
+    response,
+    isAccessToken,
+    '로그인 응답을 확인할 수 없습니다. 다시 로그인해주세요.',
+  )
+  accessToken = token.accessToken
+  expiresAt = Date.now() + token.expiresIn * 1000
 }
 
 export function exchangeLoginCode(code: string) {
@@ -58,7 +98,15 @@ export function restoreSession() {
 }
 
 export async function authenticatedFetch(path: string, init: RequestInit = {}) {
-  if (!accessToken || expiresAt <= Date.now() + 10_000) await restoreSession()
+  if (!accessToken || expiresAt <= Date.now() + 10_000) {
+    try {
+      await restoreSession()
+    } catch (error) {
+      // Only a rejected session is an expiry; a 5xx stays a request failure.
+      if (error instanceof SessionError && error.status === 401) expireSession()
+      throw error
+    }
+  }
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${accessToken}`)
   // No automatic replay of mutations: avoid creating a project twice.
@@ -66,10 +114,10 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}) {
     ...init,
     headers,
     credentials: 'include',
+    signal: withTimeout(init.signal),
   })
   if (response.status === 401) {
-    accessToken = null
-    expiresAt = 0
+    expireSession()
     throw new SessionError(401)
   }
   return response
