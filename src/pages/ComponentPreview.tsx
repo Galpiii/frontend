@@ -14,6 +14,8 @@ import {
   Input,
   Modal,
   Progress,
+  Menu,
+  MenuItem,
   SectionHeader,
   Select,
   StatCard,
@@ -107,6 +109,18 @@ export function ComponentPreview() {
             >
               ⋯
             </IconButton>
+            <Menu label="예시 프로젝트 메뉴">
+              <MenuItem onClick={() => setToast('정보 수정을 눌렀습니다.')}>
+                프로젝트 정보 수정
+              </MenuItem>
+              <MenuItem disabled>분석 새로고침 (비활성 예시)</MenuItem>
+              <MenuItem
+                tone="danger"
+                onClick={() => setToast('삭제를 눌렀습니다.')}
+              >
+                프로젝트 삭제
+              </MenuItem>
+            </Menu>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
