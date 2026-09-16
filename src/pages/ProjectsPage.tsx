@@ -104,6 +104,7 @@ export function ProjectsPage() {
   const [result, setResult] = useState<ProjectList | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
 
   const [editing, setEditing] = useState<Project | null>(null)
   const [editName, setEditName] = useState('')
@@ -130,6 +131,13 @@ export function ProjectsPage() {
 
   function reload() {
     setLoading(true)
+    setError('')
+    setAttempt((value) => value + 1)
+  }
+
+  /** Refetches in place: the list stays on screen instead of blanking out. */
+  function refresh() {
+    setRefreshing(true)
     setError('')
     setAttempt((value) => value + 1)
   }
@@ -247,7 +255,10 @@ export function ProjectsPage() {
         if (cause instanceof SessionError && cause.status === 401) return
         setError('프로젝트 목록을 불러오지 못했습니다. 다시 시도해주세요.')
       } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          setRefreshing(false)
+        }
       }
     }
     void loadProjects()
@@ -272,10 +283,25 @@ export function ProjectsPage() {
           title="프로젝트"
           description="프로젝트와 최근 상태를 한곳에서 확인하세요."
           action={
-            hasProjects && (
-              <Button onClick={() => navigate('/projects/new')}>
-                ＋ 새 프로젝트 만들기
-              </Button>
+            // Analysis states change on the server, so the list needs a way to
+            // catch up. The error state has its own retry, so it is left out.
+            result !== null &&
+            !error && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  loading={refreshing}
+                  icon={<span aria-hidden="true">⟳</span>}
+                  onClick={refresh}
+                >
+                  새로고침
+                </Button>
+                {hasProjects && (
+                  <Button onClick={() => navigate('/projects/new')}>
+                    ＋ 새 프로젝트 만들기
+                  </Button>
+                )}
+              </div>
             )
           }
         />
