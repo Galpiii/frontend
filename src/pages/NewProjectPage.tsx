@@ -189,7 +189,7 @@ export function NewProjectPage({
             hint={
               createdId !== null
                 ? '프로젝트가 생성되었습니다. 이름은 프로젝트 목록의 정보 수정 메뉴에서 변경할 수 있습니다.'
-                : '저장소는 다음 단계에서 연결합니다. 기능명세서 하나가 프로젝트에 연결된 모든 저장소와 공통으로 대조됩니다.'
+                : undefined
             }
             onChange={(event) => {
               setName(event.target.value)
