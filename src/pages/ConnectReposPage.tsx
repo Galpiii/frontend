@@ -22,7 +22,7 @@ import {
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
-import { analysisStartedMessage, startProjectAnalysis } from '../lib/projectApi'
+import { startProjectAnalysis } from '../lib/projectApi'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { ONBOARDING_STEPS } from './onboardingSteps'
 import {
@@ -365,23 +365,16 @@ export function ConnectReposPage() {
 
       // Linking is already committed. An analysis failure must not be reported
       // as a failed link or cause the repositories to be submitted again.
-      let notice
       try {
-        const run = await startProjectAnalysis(id)
-        notice = {
-          text: analysisStartedMessage(run.inaccessibleRepositoryCount),
-          tone: run.inaccessibleRepositoryCount > 0 ? 'warning' : 'success',
-        }
+        await startProjectAnalysis(id)
       } catch (cause) {
         if (cause instanceof SessionError && cause.status === 401) return
-        notice = {
-          text: '저장소는 연결되었습니다. 분석 시작 여부를 확인하지 못했습니다. 프로젝트 메뉴에서 분석 상태를 확인하고 다시 요청해주세요.',
-          tone: 'warning',
-        }
       }
       navigate('/projects', {
         replace: true,
-        state: { analysisNotice: notice },
+        state: {
+          analysisNotice: { text: '저장소가 연결되었습니다.', tone: 'success' },
+        },
       })
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
