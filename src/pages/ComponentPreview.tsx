@@ -24,6 +24,7 @@ import {
   Textarea,
   Toast,
   type Tone,
+  type ToastMessage,
 } from '../components/ui'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 
@@ -56,7 +57,9 @@ export function ComponentPreview() {
   const [tab, setTab] = useState('components')
   const [filter, setFilter] = useState('전체 저장소')
   const [overlay, setOverlay] = useState<'modal' | 'drawer' | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const setToast = (text: string) =>
+    setToasts((current) => [...current, { id: Date.now(), text }])
   const [name, setName] = useState('GDG Platform')
   const [error, setError] = useState('')
   const [savedName, setSavedName] = useState('GDG Platform')
@@ -467,7 +470,12 @@ export function ComponentPreview() {
           </Card>
         </div>
       </Drawer>
-      <Toast message={toast} onDismiss={() => setToast(null)} />
+      <Toast
+        messages={toasts}
+        onDismiss={(id) =>
+          setToasts((current) => current.filter((it) => it.id !== id))
+        }
+      />
     </AppShell>
   )
 }

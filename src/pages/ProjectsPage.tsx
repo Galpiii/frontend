@@ -15,10 +15,15 @@ import {
   SectionHeader,
   Toast,
   type Tone,
+  type ToastMessage,
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
-import { analysisStartedMessage, startProjectAnalysis } from '../lib/projectApi'
+import {
+  analysisStartedMessage,
+  AnalysisRequestRejected,
+  startProjectAnalysis,
+} from '../lib/projectApi'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 interface Project {
@@ -63,6 +68,27 @@ function isProjectList(value: unknown): value is ProjectList {
   )
 }
 
+let toastSequence = 0
+
+/** Notices handed over by the repository screen arrive as one toast each. */
+function arrivingToasts(state: unknown): ToastMessage[] {
+  const notices = (state as { analysisNotices?: unknown } | null)
+    ?.analysisNotices
+  if (!Array.isArray(notices)) return []
+  return notices.flatMap((notice) => {
+    if (typeof notice !== 'object' || notice === null) return []
+    const { text, tone } = notice as Record<string, unknown>
+    if (typeof text !== 'string' || text === '') return []
+    return [
+      {
+        id: (toastSequence += 1),
+        text,
+        tone: (tone === 'warning' ? 'warning' : 'success') as Tone,
+      },
+    ]
+  })
+}
+
 /** An unparseable timestamp must not render as "Invalid Date". */
 function formatDate(value: string) {
   const date = new Date(value)
@@ -86,19 +112,19 @@ export function ProjectsPage() {
   const [removingTarget, setRemovingTarget] = useState<Project | null>(null)
   const [removing, setRemoving] = useState(false)
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
-  const [toast, setToast] = useState<{ text: string; tone: Tone } | null>(
-    () => {
-      const notice = location.state?.analysisNotice
-      if (!notice || typeof notice.text !== 'string') return null
-      return {
-        text: notice.text,
-        tone: notice.tone === 'warning' ? 'warning' : 'success',
-      }
-    },
+  const [toasts, setToasts] = useState<ToastMessage[]>(() =>
+    arrivingToasts(location.state),
   )
 
+  function showToast(text: string, tone: Tone) {
+    setToasts((current) => [
+      ...current,
+      { id: (toastSequence += 1), text, tone },
+    ])
+  }
+
   useEffect(() => {
-    if (location.state?.analysisNotice)
+    if (location.state?.analysisNotices)
       navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, location.state, navigate])
 
@@ -128,7 +154,7 @@ export function ProjectsPage() {
       )
       if (!response.ok) throw new Error('프로젝트 정보를 수정하지 못했습니다.')
       setEditing(null)
-      setToast({ text: '프로젝트 정보를 수정했습니다.', tone: 'success' })
+      showToast('프로젝트 정보를 수정했습니다.', 'success')
       reload()
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
@@ -152,7 +178,7 @@ export function ProjectsPage() {
       )
       if (!response.ok) throw new Error('프로젝트를 삭제하지 못했습니다.')
       setRemovingTarget(null)
-      setToast({ text: '프로젝트를 삭제했습니다.', tone: 'success' })
+      showToast('프로젝트를 삭제했습니다.', 'success')
       // Deleting the only row on a later page would otherwise strand the user
       // on a page that no longer exists.
       if (result?.projects.length === 1 && page > 0) {
@@ -163,13 +189,12 @@ export function ProjectsPage() {
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       setRemovingTarget(null)
-      setToast({
-        text:
-          cause instanceof Error
-            ? cause.message
-            : '프로젝트를 삭제하지 못했습니다.',
-        tone: 'danger',
-      })
+      showToast(
+        cause instanceof Error
+          ? cause.message
+          : '프로젝트를 삭제하지 못했습니다.',
+        'danger',
+      )
     } finally {
       setRemoving(false)
     }
@@ -179,20 +204,22 @@ export function ProjectsPage() {
     setRefreshingId(project.id)
     try {
       const run = await startProjectAnalysis(project.id)
-      setToast({
-        text: analysisStartedMessage(run.inaccessibleRepositoryCount),
-        tone: run.inaccessibleRepositoryCount > 0 ? 'warning' : 'success',
-      })
+      showToast(
+        analysisStartedMessage(run.inaccessibleRepositoryCount),
+        run.inaccessibleRepositoryCount > 0 ? 'warning' : 'success',
+      )
       reload()
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
-      setToast({
-        text:
-          cause instanceof Error
-            ? cause.message
-            : '분석을 요청하지 못했습니다.',
-        tone: 'danger',
-      })
+      // Only a refusal is a confirmed failure. A dropped connection may still
+      // have queued the run, and its raw message is not for the reader.
+      if (cause instanceof AnalysisRequestRejected)
+        showToast('분석을 요청하지 못했습니다. 다시 시도해주세요.', 'danger')
+      else
+        showToast(
+          '분석 시작 여부를 확인하지 못했습니다. 잠시 후 상태를 다시 확인해주세요.',
+          'warning',
+        )
     } finally {
       setRefreshingId(null)
     }
@@ -464,9 +491,10 @@ export function ProjectsPage() {
       </Modal>
 
       <Toast
-        message={toast?.text ?? null}
-        tone={toast?.tone}
-        onDismiss={() => setToast(null)}
+        messages={toasts}
+        onDismiss={(id) =>
+          setToasts((current) => current.filter((it) => it.id !== id))
+        }
       />
     </AppShell>
   )

@@ -35,7 +35,7 @@ export function ProjectForm() {
 - Tabs: `items: { value, label, content, disabled? }[]`, `value`, `onValueChange`, 접근성 이름 `label`. 방향키/Home/End로 이동합니다.
 - FilterChip: `selected`, `onClick`으로 단일/다중 선택을 호출부에서 관리합니다.
 - Modal/Drawer: `open`, `onClose`, `title`, `description?`, `footer?`, children. native dialog로 포커스 제한, Escape/배경 클릭 닫기, 닫은 후 포커스 복원을 제공합니다. 한 번에 하나의 오버레이를 표시하는 구성을 권장합니다.
-- Toast: `message: string | null`, `onDismiss`. 자동 닫힘이 필요하면 호출부에서 타이머를 관리합니다.
+- Toast: `messages: { id, text, tone? }[]`, `onDismiss(id)`. 여러 알림을 아래에서 위로 쌓아 보여줍니다. 각 알림은 기본 6초 후 스스로 닫히며 `duration`으로 조절하고, `duration={0}`이면 닫기 버튼을 누를 때까지 남습니다. `id`는 알림마다 고유해야 하며 같은 문구를 다시 띄우려면 새 `id`를 주세요.
 - DataTable: 제네릭 row 타입, `columns: { key, header, render }[]`, `rows`, `rowKey`, `caption`. 정렬/페이지 처리/데이터 조회는 호출부 책임입니다.
 - Stepper의 `current`는 0부터 시작합니다. Progress의 `value`는 0–100입니다.
 - SectionHeader와 EmptyState의 `level`은 제목 태그만 바꾸고 크기는 유지합니다. 페이지마다 h1부터 건너뛰지 않게 지정하세요.

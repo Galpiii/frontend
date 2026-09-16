@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { tones, type Tone } from './tones'
 import { cn } from '../../lib/cn'
 import { IconButton } from './Button'
@@ -77,34 +77,74 @@ export function Progress({ label, value }: { label: string; value: number }) {
     </div>
   )
 }
-export function Toast({
+export interface ToastMessage {
+  /** Unique per notice; a repeat of the same text needs a new id to reappear. */
+  id: number
+  text: string
+  tone?: Tone
+}
+
+function ToastItem({
   message,
   onDismiss,
-  tone = 'success',
+  duration,
 }: {
-  message: string | null
+  message: ToastMessage
   onDismiss: () => void
-  tone?: Tone
+  duration: number
+}) {
+  // Held in a ref so an inline onDismiss does not restart the timer on every
+  // render, which would keep the toast open indefinitely.
+  const dismiss = useRef(onDismiss)
+  useEffect(() => {
+    dismiss.current = onDismiss
+  })
+  useEffect(() => {
+    if (duration <= 0) return
+    const timer = setTimeout(() => dismiss.current(), duration)
+    return () => clearTimeout(timer)
+  }, [duration])
+
+  return (
+    <div
+      className={cn(
+        'pointer-events-auto flex max-w-lg items-center gap-4 rounded-[10px] border px-4 py-2 shadow-dialog',
+        tones[message.tone ?? 'success'],
+      )}
+    >
+      <span>{message.text}</span>
+      <IconButton label="알림 닫기" onClick={onDismiss}>
+        ×
+      </IconButton>
+    </div>
+  )
+}
+
+export function Toast({
+  messages,
+  onDismiss,
+  duration = 6000,
+}: {
+  messages: ToastMessage[]
+  onDismiss: (id: number) => void
+  /** Milliseconds before each toast closes itself; 0 keeps them until dismissed. */
+  duration?: number
 }) {
   return (
     <div
       aria-live="polite"
-      aria-atomic="true"
-      className="fixed inset-x-4 bottom-6 z-[100] flex justify-center pointer-events-none"
+      // Each notice is announced as it arrives rather than re-reading the stack.
+      aria-atomic="false"
+      className="pointer-events-none fixed inset-x-4 bottom-6 z-[100] flex flex-col items-center gap-2"
     >
-      {message && (
-        <div
-          className={cn(
-            'pointer-events-auto flex max-w-lg items-center gap-4 rounded-[10px] border px-4 py-2 shadow-dialog',
-            tones[tone],
-          )}
-        >
-          <span>{message}</span>
-          <IconButton label="알림 닫기" onClick={onDismiss}>
-            ×
-          </IconButton>
-        </div>
-      )}
+      {messages.map((message) => (
+        <ToastItem
+          key={message.id}
+          message={message}
+          duration={duration}
+          onDismiss={() => onDismiss(message.id)}
+        />
+      ))}
     </div>
   )
 }

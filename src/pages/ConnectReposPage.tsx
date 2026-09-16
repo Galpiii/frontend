@@ -19,10 +19,15 @@ import {
   Select,
   Stepper,
   Toast,
+  type Tone,
+  type ToastMessage,
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
-import { startProjectAnalysis } from '../lib/projectApi'
+import {
+  AnalysisRequestRejected,
+  startProjectAnalysis,
+} from '../lib/projectApi'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { ONBOARDING_STEPS } from './onboardingSteps'
 import {
@@ -190,7 +195,10 @@ export function ConnectReposPage() {
   const [connecting, setConnecting] = useState(false)
   const [connectError, setConnectError] = useState('')
   const [installing, setInstalling] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+  function showToast(text: string) {
+    setToasts((current) => [...current, { id: Date.now(), text }])
+  }
 
   useEffect(() => {
     if (!validId) return
@@ -324,7 +332,7 @@ export function ConnectReposPage() {
           : [...current, repo.githubRepositoryId],
       )
       setUrl('')
-      setToast(`${repo.fullName} 저장소를 목록에 추가했습니다.`)
+      showToast(`${repo.fullName} 저장소를 목록에 추가했습니다.`)
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       setUrlError(
@@ -365,16 +373,37 @@ export function ConnectReposPage() {
 
       // Linking is already committed. An analysis failure must not be reported
       // as a failed link or cause the repositories to be submitted again.
+      // The link is reported on its own; whatever the analysis does gets a
+      // second notice so neither message hides the other.
+      const notices: { text: string; tone: Tone }[] = [
+        { text: '저장소가 연결되었습니다.', tone: 'success' },
+      ]
       try {
-        await startProjectAnalysis(id)
+        const run = await startProjectAnalysis(id)
+        if (run.inaccessibleRepositoryCount > 0)
+          notices.push({
+            text: `접근할 수 없는 저장소 ${run.inaccessibleRepositoryCount}개는 분석에서 제외됩니다.`,
+            tone: 'warning',
+          })
       } catch (cause) {
         if (cause instanceof SessionError && cause.status === 401) return
+        notices.push(
+          cause instanceof AnalysisRequestRejected
+            ? {
+                text: '저장소 분석에 실패하였습니다. 다시 요청해주세요.',
+                tone: 'warning',
+              }
+            : {
+                // The request may still have been queued, so a retry could
+                // duplicate the run; send the user to check first.
+                text: '분석 시작 여부를 확인하지 못했습니다. 분석 상태를 확인해주세요.',
+                tone: 'warning',
+              },
+        )
       }
       navigate('/projects', {
         replace: true,
-        state: {
-          analysisNotice: { text: '저장소가 연결되었습니다.', tone: 'success' },
-        },
+        state: { analysisNotices: notices },
       })
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
@@ -775,7 +804,12 @@ export function ConnectReposPage() {
         </ul>
       </Modal>
 
-      <Toast message={toast} onDismiss={() => setToast(null)} />
+      <Toast
+        messages={toasts}
+        onDismiss={(id) =>
+          setToasts((current) => current.filter((it) => it.id !== id))
+        }
+      />
     </AppShell>
   )
 }

@@ -79,12 +79,24 @@ function isAnalysisRun(value: unknown): value is AnalysisRun {
   )
 }
 
+/**
+ * The server answered and refused, so nothing was queued and a retry is safe.
+ * Every other failure — a dropped connection, a timeout, an unreadable body
+ * after a 2xx — leaves the run's fate unknown, and the user must not be told to
+ * request it again.
+ */
+export class AnalysisRequestRejected extends Error {
+  constructor() {
+    super('분석을 요청하지 못했습니다.')
+  }
+}
+
 /** Shared by the first analysis and the project menu's retry action. */
 export async function startProjectAnalysis(projectId: number) {
   const response = await authenticatedFetch(projectPaths.analyses(projectId), {
     method: 'POST',
   })
-  if (!response.ok) throw new Error('분석을 요청하지 못했습니다.')
+  if (!response.ok) throw new AnalysisRequestRejected()
   return readData(response, isAnalysisRun, '분석 응답을 확인할 수 없습니다.')
 }
 
