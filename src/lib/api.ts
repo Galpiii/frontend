@@ -3,6 +3,18 @@ export const API_PATHS = {
   token: '/auth/token',
   refresh: '/auth/refresh',
   projects: '/projects',
+  githubRepositories: '/github/repositories',
+  githubInstallUrl: '/github/install-url',
+} as const
+
+/** Paths scoped to one project; the id always comes from a route param. */
+export const projectPaths = {
+  project: (projectId: number) => `/projects/${projectId}`,
+  analyses: (projectId: number) => `/projects/${projectId}/analyses`,
+  featureSpecs: (projectId: number) => `/projects/${projectId}/feature-specs`,
+  repositories: (projectId: number) => `/projects/${projectId}/repositories`,
+  resolveRepository: (projectId: number) =>
+    `/projects/${projectId}/repositories/resolve`,
 } as const
 
 /** VITE_API_BASE_URL is the backend origin, without an API path prefix. */

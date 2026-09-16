@@ -1,8 +1,11 @@
 import { Navigate, Outlet, Route, Routes } from 'react-router'
 import { ComponentPreview } from './pages/ComponentPreview'
+import { ConnectReposPage } from './pages/ConnectReposPage'
 import { LandingPage } from './pages/LandingPage'
+import { NewProjectPage } from './pages/NewProjectPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { ProjectsPage } from './pages/ProjectsPage'
+import { ProjectDetailPage } from './pages/ProjectDetailPage'
 import { Brand } from './components/layout'
 import { useAuth } from './auth/AuthContext'
 
@@ -41,6 +44,12 @@ export default function App() {
       </Route>
       <Route element={<RequireAuth />}>
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/new" element={<NewProjectPage />} />
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+        <Route
+          path="/projects/:projectId/repositories"
+          element={<ConnectReposPage />}
+        />
       </Route>
       {/*
         main.tsx already consumed the one-time code, so the callback URL has

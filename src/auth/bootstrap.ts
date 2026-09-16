@@ -16,6 +16,24 @@ export function consumeCallback(
   const codes = url.searchParams.getAll('code')
   const failed = url.searchParams.has('error') || codes.length > 1
   const code = codes.length === 1 ? codes[0] : null
+  const installation = url.searchParams.get('installation')
+  const returnTo = url.searchParams.get('returnTo') ?? ''
+  // Installation callbacks restore the existing session, not a login code.
+  // Only the repository screen is an allowed destination for this flow.
+  if (
+    !failed &&
+    codes.length === 0 &&
+    ['verified', 'unverified'].includes(installation ?? '') &&
+    url.searchParams.getAll('returnTo').length === 1 &&
+    /^\/projects\/[1-9]\d*\/repositories$/.test(returnTo)
+  ) {
+    history.replaceState(
+      history.state,
+      '',
+      `${returnTo}?installation=${installation}`,
+    )
+    return { code: null, failed: false }
+  }
   const hasCallback =
     url.searchParams.has('code') || url.searchParams.has('error')
   if (hasCallback) {
