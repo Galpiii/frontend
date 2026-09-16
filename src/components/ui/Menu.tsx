@@ -79,7 +79,7 @@ export function Menu({
         popoverTarget={id}
         aria-label={label}
         className={cn(
-          'rounded-lg px-2 py-0.5 text-[15px] leading-none text-faint hover:bg-neutral-bg',
+          'rounded-lg border-0 bg-transparent px-2 py-0.5 text-[15px] leading-none text-faint transition-colors hover:bg-neutral-bg focus-visible:text-primary focus-visible:outline-none',
           className,
         )}
       >

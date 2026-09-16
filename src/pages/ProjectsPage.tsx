@@ -292,10 +292,7 @@ export function ProjectsPage() {
           <>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {result?.projects.map((project) => (
-                <Card
-                  key={project.id}
-                  className="relative flex flex-col gap-3 transition-colors hover:border-primary"
-                >
+                <Card key={project.id} className="relative flex flex-col gap-3">
                   <div className="flex items-start justify-between gap-3">
                     <h2 className="min-w-0 break-words text-[15px] font-extrabold">
                       <Link
