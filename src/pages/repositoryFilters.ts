@@ -117,3 +117,18 @@ export function filterRepositories(
     )
     .sort((a, b) => compareRepositories(a, b, sort))
 }
+
+/**
+ * A refreshed GitHub list replaces the rows on screen. Selections that no
+ * longer have a selectable row must leave with it, otherwise the UI can submit
+ * repository ids the user can no longer see.
+ */
+export function reconcileRepositorySelection(
+  selected: number[],
+  rows: SelectableRepository[],
+) {
+  const selectableIds = new Set(
+    rows.filter((repo) => !repo.linked).map((repo) => repo.githubRepositoryId),
+  )
+  return selected.filter((id) => selectableIds.has(id))
+}

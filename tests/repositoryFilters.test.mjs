@@ -167,3 +167,20 @@ test('owner counts describe the whole list and roll organizations up only when t
     ['acme:1', 'beta:2', 'me:1'],
   )
 })
+
+test('a refreshed list drops selections that are missing or already linked', async (t) => {
+  const { reconcileRepositorySelection } = await load(t)
+  const visible = repo('me/visible', { githubRepositoryId: 101 })
+  const nowLinked = repo('me/linked', {
+    githubRepositoryId: 202,
+    linked: true,
+  })
+
+  assert.deepEqual(
+    reconcileRepositorySelection(
+      [visible.githubRepositoryId, nowLinked.githubRepositoryId, 999],
+      [visible, nowLinked],
+    ),
+    [visible.githubRepositoryId],
+  )
+})

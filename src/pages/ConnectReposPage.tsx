@@ -36,6 +36,7 @@ import {
   OWNER_ALL,
   OWNER_ORGANIZATIONS,
   OWNER_PERSONAL,
+  reconcileRepositorySelection,
   SORT_LABELS,
   type RepositoryRow,
   type SelectableRepository,
@@ -217,16 +218,18 @@ export function ConnectReposPage() {
           'Invalid repository list',
         )
         if (controller.signal.aborted) return
-        setRepositories(
-          data.installations.flatMap((group) =>
-            group.repositories.map((repo) => ({
-              ...repo,
-              accountLogin: group.installation?.accountLogin ?? repo.owner,
-              // GitHub's own value is "Organization"; anything else, including a
-              // missing field, is treated as a personal account.
-              organization: group.installation?.accountType === 'Organization',
-            })),
-          ),
+        const refreshedRepositories = data.installations.flatMap((group) =>
+          group.repositories.map((repo) => ({
+            ...repo,
+            accountLogin: group.installation?.accountLogin ?? repo.owner,
+            // GitHub's own value is "Organization"; anything else, including a
+            // missing field, is treated as a personal account.
+            organization: group.installation?.accountType === 'Organization',
+          })),
+        )
+        setRepositories(refreshedRepositories)
+        setSelected((current) =>
+          reconcileRepositorySelection(current, refreshedRepositories),
         )
         setFailures(data.failedInstallations ?? [])
         setTruncated(
