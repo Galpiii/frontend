@@ -9,7 +9,13 @@ import ts from 'typescript'
 async function modules(t) {
   const dir = await mkdtemp(join(tmpdir(), 'galpi-auth-test-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
-  for (const file of ['lib/api', 'auth/session', 'auth/bootstrap']) {
+  for (const file of [
+    'lib/api',
+    'auth/session',
+    'auth/bootstrap',
+    'lib/projectApi',
+    'pages/onboardingSteps',
+  ]) {
     await mkdir(join(dir, file.split('/')[0]), { recursive: true })
     const source = await readFile(
       new URL(`../src/${file}.ts`, import.meta.url),
@@ -31,6 +37,8 @@ async function modules(t) {
   return {
     ...(await import(pathToFileURL(join(dir, 'auth/bootstrap.mjs')))),
     ...(await import(pathToFileURL(join(dir, 'auth/session.mjs')))),
+    ...(await import(pathToFileURL(join(dir, 'lib/projectApi.mjs')))),
+    ...(await import(pathToFileURL(join(dir, 'pages/onboardingSteps.mjs')))),
   }
 }
 
@@ -218,4 +226,195 @@ test('an expired session notifies subscribers, but a logged-out first visit does
   responses.push(new Response('', { status: 401 }))
   await assert.rejects(authenticatedFetch('/projects'), SessionError)
   assert.equal(expiries, 1)
+})
+
+test('installation callbacks restore only the matching internal repository route', async (t) => {
+  const { consumeCallback, initializeSession } = await modules(t)
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    requests.push(url)
+    return Response.json(tokenBody)
+  })
+  for (const installation of ['verified', 'unverified']) {
+    let replaced
+    const input = consumeCallback(
+      {
+        href: `https://frontend.example.test/auth/callback?installation=${installation}&returnTo=%2Fprojects%2F12%2Frepositories`,
+      },
+      {
+        state: null,
+        replaceState: (_s, _t, url) => {
+          replaced = url
+        },
+      },
+    )
+    assert.equal(
+      replaced,
+      `/projects/12/repositories?installation=${installation}`,
+    )
+    assert.deepEqual(input, { code: null, failed: false })
+    assert.equal((await initializeSession(input)).authenticated, true)
+  }
+  assert.ok(requests.every((url) => url.endsWith('/auth/refresh')))
+})
+
+test('installation callbacks reject external, malformed and ambiguous destinations', async (t) => {
+  const { consumeCallback } = await modules(t)
+  for (const destination of [
+    'https://evil.example/projects/12/repositories',
+    '//evil.example/projects/12/repositories',
+    '/projects/../repositories',
+    '/projects/0/repositories',
+    '/projects/12/repositories?redirect=https://evil.example',
+    '/projects/12/repositories#fragment',
+    '/projects/12/repositories\\evil',
+  ]) {
+    let replaced
+    consumeCallback(
+      {
+        href: `https://frontend.example.test/auth/callback?installation=verified&returnTo=${encodeURIComponent(destination)}`,
+      },
+      {
+        state: null,
+        replaceState: (_s, _t, url) => {
+          replaced = url
+        },
+      },
+    )
+    assert.equal(replaced, undefined, destination)
+  }
+  let replaced
+  consumeCallback(
+    {
+      href: 'https://frontend.example.test/auth/callback?installation=verified&returnTo=/projects/12/repositories&returnTo=/projects/13/repositories',
+    },
+    {
+      state: null,
+      replaceState: (_s, _t, url) => {
+        replaced = url
+      },
+    },
+  )
+  assert.equal(replaced, undefined)
+})
+
+test('analysis requests report skipped repositories and never replay failures', async (t) => {
+  const { initializeSession, startProjectAnalysis, analysisStartedMessage } =
+    await modules(t)
+  const requests = []
+  const responses = [
+    Response.json(tokenBody),
+    Response.json(
+      { data: { inaccessibleRepositoryCount: 2 } },
+      { status: 202 },
+    ),
+    new Response('', { status: 503 }),
+    Response.json({ data: {} }, { status: 202 }),
+  ]
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push({ url, init })
+    return responses.shift()
+  })
+  await initializeSession({ code: 'fixture-code', failed: false })
+  const run = await startProjectAnalysis(12)
+  assert.equal(run.inaccessibleRepositoryCount, 2)
+  assert.match(analysisStartedMessage(run.inaccessibleRepositoryCount), /2개/)
+  assert.equal(
+    requests[1].url,
+    'https://backend.example.test/projects/12/analyses',
+  )
+  assert.equal(requests[1].init.method, 'POST')
+  await assert.rejects(startProjectAnalysis(12), /분석을 요청하지 못했습니다/)
+  await assert.rejects(
+    startProjectAnalysis(12),
+    /분석 응답을 확인할 수 없습니다/,
+  )
+  assert.equal(requests.length, 4)
+})
+
+test('project detail resumes the saved onboarding stage without creating a project', async (t) => {
+  const { initializeSession, getProjectDetail, resumeOnboardingStep } =
+    await modules(t)
+  const requests = []
+  const draft = {
+    id: 12,
+    name: 'saved project',
+    status: 'DRAFT',
+    onboardingStep: 'SPEC',
+    repositories: [],
+    specDocument: null,
+  }
+  let detail = draft
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push({ url, init })
+    return url.endsWith('/auth/token')
+      ? Response.json(tokenBody)
+      : Response.json({ data: detail })
+  })
+  await initializeSession({ code: 'fixture-code', failed: false })
+  const specProject = await getProjectDetail(12)
+  assert.equal(specProject.name, 'saved project')
+  assert.equal(resumeOnboardingStep(specProject), 'SPEC')
+
+  detail = { ...draft, onboardingStep: 'REPOSITORIES' }
+  assert.equal(resumeOnboardingStep(await getProjectDetail(12)), 'REPOSITORIES')
+
+  // A completed upload wins even if an older step value is returned.
+  detail = { ...draft, specDocument: { fileName: 'features.pdf' } }
+  assert.equal(resumeOnboardingStep(await getProjectDetail(12)), 'REPOSITORIES')
+
+  detail = {
+    ...draft,
+    status: 'ACTIVE',
+    onboardingStep: 'ANALYSIS',
+    repositories: [{ repositoryId: 9, fullName: 'owner/repo' }],
+  }
+  assert.equal(resumeOnboardingStep(await getProjectDetail(12)), null)
+  assert.equal(resumeOnboardingStep({ ...detail, status: 'DRAFT' }), null)
+  assert.equal(resumeOnboardingStep({ ...draft, status: 'ARCHIVED' }), null)
+  assert.equal(resumeOnboardingStep({ ...draft, onboardingStep: 'DONE' }), null)
+  assert.ok(
+    requests
+      .slice(1)
+      .every(({ url, init }) => url.endsWith('/projects/12') && !init.method),
+  )
+})
+
+test('skipping a spec persists the repository stage and reports save failures', async (t) => {
+  const { initializeSession, skipProjectSpec } = await modules(t)
+  const requests = []
+  const responses = [
+    Response.json(tokenBody),
+    Response.json({ data: {} }),
+    new Response('', { status: 503 }),
+  ]
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push({ url, init })
+    return responses.shift()
+  })
+  await initializeSession({ code: 'fixture-code', failed: false })
+  await skipProjectSpec(12)
+  assert.equal(requests[1].url, 'https://backend.example.test/projects/12')
+  assert.equal(requests[1].init.method, 'PATCH')
+  assert.deepEqual(JSON.parse(requests[1].init.body), {
+    onboardingStep: 'REPOSITORIES',
+  })
+  await assert.rejects(skipProjectSpec(12), /진행 단계를 저장하지 못했습니다/)
+  assert.equal(requests.length, 3)
+})
+
+test('missing or malformed project detail cannot open an onboarding form', async (t) => {
+  const { initializeSession, getProjectDetail } = await modules(t)
+  const responses = [
+    Response.json(tokenBody),
+    new Response('', { status: 404 }),
+    Response.json({ data: { id: 12, name: 'incomplete' } }),
+  ]
+  t.mock.method(globalThis, 'fetch', async () => responses.shift())
+  await initializeSession({ code: 'fixture-code', failed: false })
+  await assert.rejects(getProjectDetail(12), /프로젝트를 찾을 수 없습니다/)
+  await assert.rejects(
+    getProjectDetail(12),
+    /프로젝트 응답을 확인할 수 없습니다/,
+  )
 })

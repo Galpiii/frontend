@@ -1,7 +1,12 @@
 # Pages and authentication
 
 - `LandingPage.tsx`: GitHub login entry, with `returnTo=/projects`.
-- `ProjectsPage.tsx`: authenticated project home. Fetches `GET /projects` with loading, empty, error and pagination states. The creation screen and POST handler have been removed; the create button is disabled and labeled as being prepared until that flow is implemented.
+- `ProjectsPage.tsx`: project list, name editing, deletion, analysis requests and project detail links.
+- `ProjectDetailPage.tsx`: fetches the latest saved project. Drafts resume the spec or repository step; connected projects show their saved spec and repositories.
+- `NewProjectPage.tsx`: project creation and optional PDF upload. After creation, the name is locked; upload retries and resumed forms reuse the existing project. Skipping a spec saves `onboardingStep=REPOSITORIES` before navigation.
+- `ConnectReposPage.tsx`: repository lookup, selection, GitHub App installation and connection. After linking, it requests analysis separately and reports analysis failures without treating the saved link as a failure.
+- `onboardingSteps.ts`: shared step labels and the resume decision based on the saved step and resources.
+- `repositoryFilters.ts`: pure repository filtering and sorting functions, tested independently.
 - `NotFoundPage.tsx`: unmatched routes.
 - `ComponentPreview.tsx`: development reference only, mounted at `/preview` in dev builds and excluded from the production bundle.
 
@@ -9,13 +14,16 @@
 
 `main.tsx` mounts `BrowserRouter` outside `AuthProvider`, and `App.tsx` declares the routes:
 
-| Path             | Screen             | Guard                                                    |
-| ---------------- | ------------------ | -------------------------------------------------------- |
-| `/`              | `LandingPage`      | `GuestOnly` — a signed-in visitor is sent to `/projects` |
-| `/projects`      | `ProjectsPage`     | `RequireAuth` — a signed-out visitor is sent to `/`      |
-| `/auth/callback` | redirect to `/`    | the guards forward from there                            |
-| `/preview`       | `ComponentPreview` | dev builds only                                          |
-| `*`              | `NotFoundPage`     | —                                                        |
+| Path                                | Screen              | Guard                                                    |
+| ----------------------------------- | ------------------- | -------------------------------------------------------- |
+| `/`                                 | `LandingPage`       | `GuestOnly` — a signed-in visitor is sent to `/projects` |
+| `/projects`                         | `ProjectsPage`      | `RequireAuth` — a signed-out visitor is sent to `/`      |
+| `/projects/:projectId`              | `ProjectDetailPage` | `RequireAuth`                                            |
+| `/projects/new`                     | `NewProjectPage`    | `RequireAuth`                                            |
+| `/projects/:projectId/repositories` | `ConnectReposPage`  | `RequireAuth`                                            |
+| `/auth/callback`                    | redirect to `/`     | the guards forward from there                            |
+| `/preview`                          | `ComponentPreview`  | dev builds only                                          |
+| `*`                                 | `NotFoundPage`      | —                                                        |
 
 While auth is still resolving, `App` renders a loading screen instead of the route tree, so a guard never decides on an unknown session. Each screen sets its own tab title with `useDocumentTitle`. Add authenticated screens as children of the `RequireAuth` route; they need no sign-in wiring of their own.
 
@@ -29,7 +37,7 @@ Every backend call is bounded by a 15 second timeout, combined with the caller's
 
 Set `VITE_API_BASE_URL=http://localhost:8080` in `.env`. Change it to the HTTPS backend origin and rebuild for deployment. Vite embeds environment values during the build; `.env.local` and mode-specific files can override `.env`. The obsolete `VITE_GITHUB_LOGIN_URL` is not used.
 
-The backend's default frontend redirect URI must point to this SPA (for example its configured `/auth/callback` route). `returnTo` is a post-login hint, not an override for the backend's default redirect URI. This client consumes `code`/`error` on arrival and always navigates to `/projects` after successful authentication, ignoring arbitrary redirect destinations in the query. Production hosting must serve `index.html` for SPA routes, including `/auth/callback` and `/projects`.
+The backend's default frontend redirect URI must point to this SPA (for example its configured `/auth/callback` route). `returnTo` is a post-login hint, not an override for the backend's default redirect URI. Login callbacks consume `code`/`error` and navigate to `/projects`, ignoring arbitrary destinations. Installation callbacks (`installation=verified|unverified`) restore the session and return only to an exact `/projects/<positive integer>/repositories` path. External URLs and query/hash suffixes are not accepted. Production hosting must serve `index.html` for SPA routes, including `/auth/callback` and `/projects`.
 
 ## Flow
 
@@ -49,3 +57,13 @@ Use the same local frontend/backend hostname where cookies require same-site req
 `node --test tests/auth.test.mjs` tests the actual transpiled auth modules with mocked fetch responses: URL cleanup, one-time exchange, bearer attachment, invalid codes, refresh deduplication/CSRF header, unauthenticated restoration, request timeouts alongside caller aborts, and session-expiry notification. `npm run build` and `npm run lint` check the application.
 
 GitHub button: official Invertocat SVG and Tailwind styling based on the [Primer guide](https://primer.style/product/components/button/), not an embedded authentication widget.
+
+## File placement
+
+Keep route screens in `pages`, reusable presentation components in `components/ui`, and authentication in `auth`. The small screen-specific step/filter modules stay beside their pages. `lib/projectApi.ts` shares the analysis request and result message used by both the list and repository connection screens. It does not own UI state. No additional feature folders or state-management dependencies are needed for these screens.
+
+## Resuming creation
+
+Project cards in the list open `/projects/:projectId`. This reads `GET /projects/:projectId` instead of relying on potentially stale list data. A draft in `SPEC` reuses the creation form with its saved id and name; a saved document or the `REPOSITORIES` step opens repository selection. Active/archived projects and projects with linked repositories do not return to onboarding. Uploading a spec advances the step on the backend; skipping it explicitly PATCHes the step.
+
+The project first exists on the server when the user submits the creation form. Before that, unsent name/file inputs are not a saved draft. A local PDF that has not finished uploading must be selected again, and repository selections that have not been linked are not persisted. Leaving the spec page cancels pending client requests; already committed server data remains available through the project list.

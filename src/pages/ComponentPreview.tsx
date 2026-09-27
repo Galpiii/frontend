@@ -14,6 +14,8 @@ import {
   Input,
   Modal,
   Progress,
+  Menu,
+  MenuItem,
   SectionHeader,
   Select,
   StatCard,
@@ -22,6 +24,7 @@ import {
   Textarea,
   Toast,
   type Tone,
+  type ToastMessage,
 } from '../components/ui'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 
@@ -54,7 +57,9 @@ export function ComponentPreview() {
   const [tab, setTab] = useState('components')
   const [filter, setFilter] = useState('전체 저장소')
   const [overlay, setOverlay] = useState<'modal' | 'drawer' | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const setToast = (text: string) =>
+    setToasts((current) => [...current, { id: Date.now(), text }])
   const [name, setName] = useState('GDG Platform')
   const [error, setError] = useState('')
   const [savedName, setSavedName] = useState('GDG Platform')
@@ -107,6 +112,18 @@ export function ComponentPreview() {
             >
               ⋯
             </IconButton>
+            <Menu label="예시 프로젝트 메뉴">
+              <MenuItem onClick={() => setToast('정보 수정을 눌렀습니다.')}>
+                프로젝트 정보 수정
+              </MenuItem>
+              <MenuItem disabled>분석 새로고침 (비활성 예시)</MenuItem>
+              <MenuItem
+                tone="danger"
+                onClick={() => setToast('삭제를 눌렀습니다.')}
+              >
+                프로젝트 삭제
+              </MenuItem>
+            </Menu>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -453,7 +470,12 @@ export function ComponentPreview() {
           </Card>
         </div>
       </Drawer>
-      <Toast message={toast} onDismiss={() => setToast(null)} />
+      <Toast
+        messages={toasts}
+        onDismiss={(id) =>
+          setToasts((current) => current.filter((it) => it.id !== id))
+        }
+      />
     </AppShell>
   )
 }
