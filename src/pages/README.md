@@ -67,3 +67,28 @@ Keep route screens in `pages`, reusable presentation components in `components/u
 Project cards in the list open `/projects/:projectId`. This reads `GET /projects/:projectId` instead of relying on potentially stale list data. A draft in `SPEC` reuses the creation form with its saved id and name; a saved document or the `REPOSITORIES` step opens repository selection. Active/archived projects and projects with linked repositories do not return to onboarding. Uploading a spec advances the step on the backend; skipping it explicitly PATCHes the step.
 
 The project first exists on the server when the user submits the creation form. Before that, unsent name/file inputs are not a saved draft. A local PDF that has not finished uploading must be selected again, and repository selections that have not been linked are not persisted. Leaving the spec page cancels pending client requests; already committed server data remains available through the project list.
+
+## AI consent before analysis
+
+Both the project menu's analysis refresh and the first analysis after repository linking use `useAnalysisStart` and `AiConsentModal`. `AnalysisFlow` owns one pending user intent and prevents duplicate consent/analysis requests.
+
+- Read `GET /consents/ai-data` immediately before analysis. Already-agreed users proceed without a consent POST.
+- Otherwise show the server's `notice` with safe heading, list and emphasis formatting and its `currentVersion`. A prior `agreedVersion` marks re-consent. The checkbox always starts unchecked.
+- Explicit confirmation POSTs `{ consentVersion }` to `/consents/ai-data`. Only a successful, validated agreement response permits analysis.
+- `409 CONSENT-002` reloads the current notice and clears the checkbox. `403 CONSENT-001` from the analysis endpoint also returns to consent; neither condition silently agrees to a new policy or automatically retries analysis.
+- Cancel/Escape dismiss during lookup or saving invalidates late responses. Backdrop clicks never dismiss the consent modal. A consent save already received by the server may persist, but cancellation never dispatches analysis. Once analysis is dispatched, closing is disabled until its bounded request settles.
+- Before the repository connection POST, `requestConsent()` checks/saves agreement without starting analysis. Cancelling stays on repository selection without linking anything. Connection loading starts only after agreement. After linking, analysis checks consent again in case the server policy changed; already-saved links are preserved on subsequent failure. Leaving the page ignores late responses.
+- Confirmed 4xx analysis refusals can be retried manually. Network failures, 5xx and unreadable success bodies have uncertain outcomes and are never automatically replayed.
+- No consent is cached in local storage. Each new analysis intent checks the server's current policy.
+
+`tests/analysisFlow.test.mjs` covers explicit consent, cancellation races, version changes, analysis consent rejection, duplicate submission, unmount and API error classification. Progress polling and analysis-result screens remain separate work.
+
+## Session check before creation
+
+Creating a new project passes `verifySession: true` to `authenticatedFetch`. It refreshes the session before the mutation even when the in-memory access token has time left. A missing/rejected refresh cookie (401) expires the UI session and prevents the project POST. Transient failures also prevent creation and remain retryable. This is a client-side recheck; deleting a refresh cookie does not itself revoke an already issued access token on the backend.
+
+## Expanded consent document
+
+`docs/ai-data-consent.draft.md` adapts the requested document to 갈피. It is an unpublished draft: provider, destination, retention/training policy, actual transmitted fields, withdrawal route and effective date still need confirmation. Do not publish the bracketed placeholders. Register the finalized text as a **new backend consent version**, preserving the existing version/text/hash history. The frontend continues rendering `GET /consents/ai-data` so the displayed document matches the saved version rather than silently replacing it with local copy.
+
+`ConsentNotice` supports three heading levels, paragraphs, lists, bold text and blockquotes without rendering HTML. When the versioned document includes 국외 이전, the modal requires separate unchecked AI-processing and overseas-transfer checkboxes before the existing combined version-consent POST. The present API stores a single version agreement, not separate per-purpose records; separate audit records would require a backend contract change.
