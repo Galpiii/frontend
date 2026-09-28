@@ -98,12 +98,16 @@ export function NewProjectPage({
     try {
       let projectId = createdId
       if (projectId === null) {
-        const response = await authenticatedFetch(API_PATHS.projects, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: trimmed }),
-          signal,
-        })
+        const response = await authenticatedFetch(
+          API_PATHS.projects,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: trimmed }),
+            signal,
+          },
+          { verifySession: true },
+        )
         if (!response.ok)
           throw new Error(
             '프로젝트를 만들지 못했습니다. 잠시 후 다시 시도해주세요.',

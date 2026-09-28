@@ -97,8 +97,16 @@ export function restoreSession() {
   return refreshRequest
 }
 
-export async function authenticatedFetch(path: string, init: RequestInit = {}) {
-  if (!accessToken || expiresAt <= Date.now() + 10_000) {
+export async function authenticatedFetch(
+  path: string,
+  init: RequestInit = {},
+  options: { verifySession?: boolean } = {},
+) {
+  if (
+    options.verifySession ||
+    !accessToken ||
+    expiresAt <= Date.now() + 10_000
+  ) {
     try {
       await restoreSession()
     } catch (error) {
@@ -107,6 +115,7 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}) {
       throw error
     }
   }
+  init.signal?.throwIfAborted()
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${accessToken}`)
   // No automatic replay of mutations: avoid creating a project twice.

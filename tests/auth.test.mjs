@@ -13,6 +13,7 @@ async function modules(t) {
     'lib/api',
     'auth/session',
     'auth/bootstrap',
+    'lib/consentApi',
     'lib/projectApi',
     'pages/onboardingSteps',
   ]) {
@@ -324,7 +325,7 @@ test('analysis requests report skipped repositories and never replay failures', 
     'https://backend.example.test/projects/12/analyses',
   )
   assert.equal(requests[1].init.method, 'POST')
-  await assert.rejects(startProjectAnalysis(12), /분석을 요청하지 못했습니다/)
+  await assert.rejects(startProjectAnalysis(12), /Analysis outcome unknown/)
   await assert.rejects(
     startProjectAnalysis(12),
     /분석 응답을 확인할 수 없습니다/,
@@ -417,4 +418,57 @@ test('missing or malformed project detail cannot open an onboarding form', async
     getProjectDetail(12),
     /프로젝트 응답을 확인할 수 없습니다/,
   )
+})
+
+test('explicit session verification rejects a deleted refresh cookie despite a valid access token', async (t) => {
+  const {
+    exchangeLoginCode,
+    authenticatedFetch,
+    onUnauthorized,
+    SessionError,
+  } = await modules(t)
+  const calls = []
+  let expired = 0
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    calls.push(new URL(url).pathname)
+    if (url.endsWith('/auth/token')) return Response.json(tokenBody)
+    if (url.endsWith('/auth/refresh'))
+      return new Response(null, { status: 401 })
+    assert.fail('Project must not be created')
+  })
+  await exchangeLoginCode('fixture')
+  const unsubscribe = onUnauthorized(() => expired++)
+  t.after(unsubscribe)
+  await assert.rejects(
+    authenticatedFetch(
+      '/projects',
+      { method: 'POST' },
+      { verifySession: true },
+    ),
+    SessionError,
+  )
+  assert.deepEqual(calls, ['/auth/token', '/auth/refresh'])
+  assert.equal(expired, 1)
+})
+
+test('explicit session verification refreshes before sending a mutation exactly once', async (t) => {
+  const { exchangeLoginCode, authenticatedFetch } = await modules(t)
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push(new URL(url).pathname)
+    if (url.endsWith('/auth/token')) return Response.json(tokenBody)
+    if (url.endsWith('/auth/refresh'))
+      return Response.json({
+        data: { ...tokenBody.data, accessToken: 'new-token' },
+      })
+    assert.equal(init.headers.get('Authorization'), 'Bearer new-token')
+    return Response.json({ data: { id: 1 } })
+  })
+  await exchangeLoginCode('fixture')
+  await authenticatedFetch(
+    '/projects',
+    { method: 'POST' },
+    { verifySession: true },
+  )
+  assert.deepEqual(calls, ['/auth/token', '/auth/refresh', '/projects'])
 })
