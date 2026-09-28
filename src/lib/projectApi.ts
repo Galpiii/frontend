@@ -1,4 +1,5 @@
 import { authenticatedFetch } from '../auth/session.ts'
+import { ConsentRequired } from './consentApi.ts'
 import { projectPaths, readData } from './api.ts'
 
 export interface ProjectDetail {
@@ -80,8 +81,8 @@ function isAnalysisRun(value: unknown): value is AnalysisRun {
 }
 
 /**
- * The server answered and refused, so nothing was queued and a retry is safe.
- * Every other failure — a dropped connection, a timeout, an unreadable body
+ * A 4xx refusal confirms that the request was rejected.
+ * A 5xx or any other failure — a dropped connection, a timeout, an unreadable body
  * after a 2xx — leaves the run's fate unknown, and the user must not be told to
  * request it again.
  */
@@ -92,11 +93,21 @@ export class AnalysisRequestRejected extends Error {
 }
 
 /** Shared by the first analysis and the project menu's retry action. */
-export async function startProjectAnalysis(projectId: number) {
+export async function startProjectAnalysis(
+  projectId: number,
+  signal?: AbortSignal,
+) {
   const response = await authenticatedFetch(projectPaths.analyses(projectId), {
     method: 'POST',
+    signal,
   })
-  if (!response.ok) throw new AnalysisRequestRejected()
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    if (response.status === 403 && body?.code === 'CONSENT-001')
+      throw new ConsentRequired()
+    if (response.status < 500) throw new AnalysisRequestRejected()
+    throw new Error('Analysis outcome unknown')
+  }
   return readData(response, isAnalysisRun, '분석 응답을 확인할 수 없습니다.')
 }
 

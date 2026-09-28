@@ -1,4 +1,5 @@
 export const API_PATHS = {
+  aiConsent: '/consents/ai-data',
   githubAuthorize: '/auth/github/authorize',
   token: '/auth/token',
   refresh: '/auth/refresh',
