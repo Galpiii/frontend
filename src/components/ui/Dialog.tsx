@@ -8,6 +8,8 @@ export interface DialogProps {
   description?: string
   children: ReactNode
   footer?: ReactNode
+  closeDisabled?: boolean
+  closeOnBackdrop?: boolean
 }
 function Overlay({
   open,
@@ -16,6 +18,8 @@ function Overlay({
   description,
   children,
   footer,
+  closeDisabled = false,
+  closeOnBackdrop = true,
   drawer = false,
 }: DialogProps & { drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -40,10 +44,15 @@ function Overlay({
       aria-describedby={description ? `${id}-description` : undefined}
       onCancel={(event) => {
         event.preventDefault()
-        onClose()
+        if (!closeDisabled) onClose()
       }}
       onClick={(event) => {
-        if (event.target !== event.currentTarget) return
+        if (
+          !closeOnBackdrop ||
+          closeDisabled ||
+          event.target !== event.currentTarget
+        )
+          return
         const bounds = event.currentTarget.getBoundingClientRect()
         if (
           event.clientX < bounds.left ||
@@ -80,7 +89,7 @@ function Overlay({
               </p>
             )}
           </div>
-          <IconButton label="닫기" onClick={onClose}>
+          <IconButton label="닫기" onClick={onClose} disabled={closeDisabled}>
             ×
           </IconButton>
         </header>

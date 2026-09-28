@@ -1,3 +1,5 @@
+import { useAnalysisStart } from '../analysis/useAnalysisStart'
+import { AiConsentModal } from '../components/AiConsentModal'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { AppHeader, AppShell } from '../components/layout'
@@ -22,7 +24,6 @@ import { API_PATHS, projectPaths, readData } from '../lib/api'
 import {
   analysisStartedMessage,
   AnalysisRequestRejected,
-  startProjectAnalysis,
 } from '../lib/projectApi'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 
@@ -96,6 +97,7 @@ function formatDate(value: string) {
 }
 
 export function ProjectsPage() {
+  const analysis = useAnalysisStart()
   useDocumentTitle('프로젝트')
   const navigate = useNavigate()
   const location = useLocation()
@@ -209,9 +211,11 @@ export function ProjectsPage() {
   }
 
   async function refreshAnalysis(project: Project) {
+    if (analysis.flow.state.phase !== 'idle') return
     setRefreshingId(project.id)
     try {
-      const run = await startProjectAnalysis(project.id)
+      const run = await analysis.flow.start(project.id)
+      if (!run) return
       showToast(
         analysisStartedMessage(run.inaccessibleRepositoryCount),
         run.inaccessibleRepositoryCount > 0 ? 'warning' : 'success',
@@ -522,6 +526,7 @@ export function ProjectsPage() {
           setToasts((current) => current.filter((it) => it.id !== id))
         }
       />
+      <AiConsentModal flow={analysis.flow} state={analysis.state} />
     </AppShell>
   )
 }

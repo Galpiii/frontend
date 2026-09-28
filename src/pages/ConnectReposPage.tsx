@@ -1,3 +1,5 @@
+import { useAnalysisStart } from '../analysis/useAnalysisStart'
+import { AiConsentModal } from '../components/AiConsentModal'
 import { useEffect, useMemo, useState } from 'react'
 import {
   Link,
@@ -24,10 +26,7 @@ import {
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
-import {
-  AnalysisRequestRejected,
-  startProjectAnalysis,
-} from '../lib/projectApi'
+import { AnalysisRequestRejected } from '../lib/projectApi'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { ONBOARDING_STEPS } from './onboardingSteps'
 import {
@@ -192,6 +191,7 @@ export function ConnectReposPage() {
   const [urlError, setUrlError] = useState('')
   const [resolving, setResolving] = useState(false)
 
+  const analysis = useAnalysisStart()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [connectError, setConnectError] = useState('')
@@ -349,10 +349,18 @@ export function ConnectReposPage() {
   }
 
   async function connect() {
-    if (connecting || selected.length === 0) return
-    setConnecting(true)
+    if (
+      connecting ||
+      analysis.flow.state.phase !== 'idle' ||
+      selected.length === 0
+    )
+      return
+    setConfirmOpen(false)
     setConnectError('')
     try {
+      const agreed = await analysis.flow.requestConsent()
+      if (!agreed || analysis.flow.disposed) return
+      setConnecting(true)
       const response = await authenticatedFetch(projectPaths.repositories(id), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -382,8 +390,15 @@ export function ConnectReposPage() {
         { text: '저장소가 연결되었습니다.', tone: 'success' },
       ]
       try {
-        const run = await startProjectAnalysis(id)
-        if (run.inaccessibleRepositoryCount > 0)
+        setConfirmOpen(false)
+        const run = await analysis.flow.start(id)
+        if (analysis.flow.disposed) return
+        if (!run)
+          notices.push({
+            text: '분석을 시작하지 않았습니다. 프로젝트 목록에서 나중에 시작할 수 있습니다.',
+            tone: 'neutral',
+          })
+        if (run && run.inaccessibleRepositoryCount > 0)
           notices.push({
             text: `접근할 수 없는 저장소 ${run.inaccessibleRepositoryCount}개는 분석에서 제외됩니다.`,
             tone: 'warning',
@@ -756,8 +771,13 @@ export function ConnectReposPage() {
             >
               선택 해제
             </Button>
-            <Button onClick={() => setConfirmOpen(true)}>
-              {selected.length}개 저장소 연결
+            <Button
+              disabled={connecting || analysis.state.phase !== 'idle'}
+              onClick={() => setConfirmOpen(true)}
+            >
+              {connecting
+                ? '저장소 연결 및 분석 요청 중…'
+                : `${selected.length}개 저장소 연결`}
             </Button>
           </div>
         )}
@@ -769,7 +789,7 @@ export function ConnectReposPage() {
           if (!connecting) setConfirmOpen(false)
         }}
         title={`${selected.length}개 저장소를 연결할까요?`}
-        description="저장소를 연결한 뒤 기본 설정(Merge된 PR · 기본 브랜치)으로 분석을 요청합니다."
+        description="외부 AI 전송 동의를 먼저 확인합니다. 동의가 완료되면 저장소를 연결하고 기본 설정(Merge된 PR · 기본 브랜치)으로 분석을 요청합니다."
         footer={
           <>
             <Button
@@ -813,6 +833,7 @@ export function ConnectReposPage() {
           setToasts((current) => current.filter((it) => it.id !== id))
         }
       />
+      <AiConsentModal flow={analysis.flow} state={analysis.state} />
     </AppShell>
   )
 }

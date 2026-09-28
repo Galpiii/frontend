@@ -1,0 +1,371 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import ts from 'typescript'
+
+async function modules(t) {
+  const dir = await mkdtemp(join(tmpdir(), 'galpi-consent-test-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  for (const file of [
+    'lib/api',
+    'auth/session',
+    'lib/consentApi',
+    'lib/projectApi',
+    'analysis/analysisFlow',
+  ]) {
+    await mkdir(join(dir, file.split('/')[0]), { recursive: true })
+    const source = await readFile(
+      new URL(`../src/${file}.ts`, import.meta.url),
+      'utf8',
+    )
+    const { outputText } = ts.transpileModule(source, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2023,
+        module: ts.ModuleKind.ESNext,
+      },
+    })
+    await writeFile(
+      join(dir, `${file}.mjs`),
+      (file === 'lib/api'
+        ? "import.meta.env = { VITE_API_BASE_URL: 'https://backend.example.test' };\n"
+        : '') + outputText.replaceAll(".ts'", ".mjs'"),
+    )
+  }
+  let result = {}
+  for (const file of [
+    'analysis/analysisFlow',
+    'lib/consentApi',
+    'lib/projectApi',
+    'auth/session',
+  ])
+    result = {
+      ...result,
+      ...(await import(pathToFileURL(join(dir, `${file}.mjs`)))),
+    }
+  return result
+}
+const notice = {
+  currentVersion: 'v1',
+  agreed: false,
+  agreedVersion: null,
+  notice: '서버 고지\n외부 AI 전송 안내',
+}
+const run = { inaccessibleRepositoryCount: 0 }
+const tick = () => new Promise((resolve) => setImmediate(resolve))
+function deferred() {
+  let resolve
+  const promise = new Promise((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+function apis(overrides = {}) {
+  return {
+    get: async () => notice,
+    agree: async () => ({ ...notice, agreed: true, agreedVersion: 'v1' }),
+    start: async () => run,
+    ...overrides,
+  }
+}
+
+test('already agreed starts without consent POST; duplicate starts are ignored', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  let starts = 0
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      get: async () => ({ ...notice, agreed: true }),
+      agree: () => assert.fail('no consent POST'),
+      start: async (id) => {
+        assert.equal(id, 42)
+        starts++
+        return run
+      },
+    }),
+  )
+  const pending = flow.start(42)
+  assert.equal(await flow.start(43), null)
+  assert.deepEqual(await pending, run)
+  assert.equal(starts, 1)
+})
+
+test('first consent requires explicit checkbox and persists displayed version before one analysis', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  const calls = []
+  const saving = deferred()
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      agree: async (version) => {
+        calls.push(version)
+        await saving.promise
+        return { ...notice, agreed: true }
+      },
+      start: async () => {
+        calls.push('analysis')
+        return run
+      },
+    }),
+  )
+  const pending = flow.start(42)
+  await tick()
+  assert.equal(flow.state.phase, 'consent')
+  assert.equal(flow.state.checked, false)
+  await flow.confirm()
+  assert.deepEqual(calls, [])
+  flow.setChecked(true)
+  const submit = flow.confirm()
+  await flow.confirm()
+  assert.deepEqual(calls, ['v1'])
+  saving.resolve()
+  await submit
+  await pending
+  assert.deepEqual(calls, ['v1', 'analysis'])
+})
+
+test('cancel during lookup or save ignores late responses and never starts analysis', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  for (const phase of ['lookup', 'save']) {
+    const waiting = deferred()
+    const flow = new AnalysisFlow(
+      () => {},
+      apis({
+        get: async () => {
+          if (phase === 'lookup') await waiting.promise
+          return notice
+        },
+        agree: async () => {
+          await waiting.promise
+          return notice
+        },
+        start: () => assert.fail('cancelled'),
+      }),
+    )
+    const pending = flow.start(1)
+    await tick()
+    if (phase === 'save') {
+      flow.setChecked(true)
+      void flow.confirm()
+    }
+    flow.cancel()
+    assert.equal(await pending, null)
+    waiting.resolve()
+    await tick()
+    assert.equal(flow.state.phase, 'idle')
+  }
+})
+
+test('version conflict fetches new notice and resets checkbox before resubmitting', async (t) => {
+  const { AnalysisFlow, ConsentVersionChanged } = await modules(t)
+  let gets = 0
+  const versions = []
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      get: async () =>
+        ++gets === 1
+          ? notice
+          : {
+              ...notice,
+              currentVersion: 'v2',
+              agreedVersion: 'v1',
+              notice: '변경된 고지',
+            },
+      agree: async (version) => {
+        versions.push(version)
+        if (version === 'v1') throw new ConsentVersionChanged()
+        return notice
+      },
+    }),
+  )
+  const pending = flow.start(1)
+  await tick()
+  flow.setChecked(true)
+  await flow.confirm()
+  assert.equal(flow.state.checked, false)
+  assert.equal(flow.state.consent.notice, '변경된 고지')
+  await flow.confirm()
+  assert.deepEqual(versions, ['v1'])
+  flow.setChecked(true)
+  await flow.confirm()
+  await pending
+  assert.deepEqual(versions, ['v1', 'v2'])
+})
+
+test('CONSENT-001 race returns to consent, with no automatic analysis replay', async (t) => {
+  const { AnalysisFlow, ConsentRequired } = await modules(t)
+  let starts = 0
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      get: async () => ({ ...notice, agreed: true }),
+      start: async () => {
+        if (++starts === 1) throw new ConsentRequired()
+        return run
+      },
+    }),
+  )
+  const pending = flow.start(1)
+  await tick()
+  assert.equal(flow.state.phase, 'consent')
+  assert.equal(starts, 1)
+  flow.setChecked(true)
+  await flow.confirm()
+  await pending
+  assert.equal(starts, 2)
+})
+
+test('preflight failures are retryable without analysis; cancel preserves linked resources', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  let gets = 0
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      get: async () => {
+        if (++gets === 1) throw new Error('network')
+        return notice
+      },
+      agree: async () => {
+        throw new Error('network')
+      },
+      start: () => assert.fail('no analysis'),
+    }),
+  )
+  const pending = flow.start(1)
+  await tick()
+  assert.equal(flow.state.phase, 'error')
+  flow.retry()
+  await tick()
+  flow.setChecked(true)
+  await flow.confirm()
+  assert.equal(flow.state.phase, 'error')
+  // The flow only operates on consent and analysis APIs, never repository mutations.
+  flow.cancel()
+  assert.equal(await pending, null)
+})
+
+test('analysis timeout and confirmed rejection propagate once, never auto-retry', async (t) => {
+  const { AnalysisFlow, AnalysisRequestRejected } = await modules(t)
+  for (const error of [new Error('timeout'), new AnalysisRequestRejected()]) {
+    let calls = 0
+    const flow = new AnalysisFlow(
+      () => {},
+      apis({
+        get: async () => ({ ...notice, agreed: true }),
+        start: async () => {
+          calls++
+          throw error
+        },
+      }),
+    )
+    await assert.rejects(flow.start(1), (e) => e === error)
+    assert.equal(calls, 1)
+    assert.equal(flow.state.phase, 'idle')
+  }
+})
+
+test('unmount invalidates pending responses without notifying UI', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  const waiting = deferred()
+  let updates = 0
+  const flow = new AnalysisFlow(
+    () => updates++,
+    apis({
+      get: async () => {
+        await waiting.promise
+        return { ...notice, agreed: true }
+      },
+      start: () => assert.fail('unmounted'),
+    }),
+  )
+  const pending = flow.start(1)
+  flow.cancel(true)
+  const before = updates
+  waiting.resolve()
+  assert.equal(await pending, null)
+  await tick()
+  assert.equal(updates, before)
+  assert.equal(flow.disposed, true)
+})
+
+test('real API wrappers send correct version and distinguish consent codes from other failures', async (t) => {
+  const {
+    exchangeLoginCode,
+    getAiConsent,
+    agreeAiConsent,
+    startProjectAnalysis,
+    ConsentRequired,
+    ConsentVersionChanged,
+    AnalysisRequestRejected,
+  } = await modules(t)
+  const requests = []
+  let reply = Response.json({ data: notice })
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    requests.push({ url, init })
+    if (url.endsWith('/auth/token'))
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    return reply.clone()
+  })
+  await exchangeLoginCode('fixture')
+  assert.deepEqual(await getAiConsent(), notice)
+  reply = Response.json({
+    data: { ...notice, agreed: true, agreedVersion: 'v1' },
+  })
+  await agreeAiConsent('v1')
+  assert.equal(
+    requests.at(-1).url,
+    'https://backend.example.test/consents/ai-data',
+  )
+  assert.deepEqual(JSON.parse(requests.at(-1).init.body), {
+    consentVersion: 'v1',
+  })
+  reply = Response.json({ code: 'CONSENT-002' }, { status: 409 })
+  await assert.rejects(agreeAiConsent('v1'), ConsentVersionChanged)
+  reply = Response.json({ code: 'CONSENT-001' }, { status: 403 })
+  await assert.rejects(startProjectAnalysis(1), ConsentRequired)
+  reply = Response.json({ code: 'OTHER' }, { status: 403 })
+  await assert.rejects(startProjectAnalysis(1), AnalysisRequestRejected)
+  reply = Response.json({}, { status: 503 })
+  await assert.rejects(
+    startProjectAnalysis(1),
+    (e) => !(e instanceof AnalysisRequestRejected),
+  )
+  reply = Response.json({ data: { ...notice, notice: '' } })
+  await assert.rejects(getAiConsent(), /동의 정보를 확인/)
+})
+
+test('consent-only gate must finish before linking; cancel never links or starts analysis', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  const calls = []
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      agree: async () => {
+        calls.push('consent')
+        return notice
+      },
+      start: () => assert.fail('Consent gate cannot start analysis'),
+    }),
+  )
+  async function connect() {
+    if (await flow.requestConsent()) calls.push('link')
+  }
+  const cancelled = connect()
+  await tick()
+  assert.equal(flow.consentOnly, true)
+  assert.deepEqual(calls, [])
+  flow.cancel()
+  await cancelled
+  assert.deepEqual(calls, [])
+  const accepted = connect()
+  await tick()
+  flow.setChecked(true)
+  await flow.confirm()
+  await accepted
+  assert.deepEqual(calls, ['consent', 'link'])
+})
