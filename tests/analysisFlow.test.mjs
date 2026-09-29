@@ -369,3 +369,102 @@ test('consent-only gate must finish before linking; cancel never links or starts
   await accepted
   assert.deepEqual(calls, ['consent', 'link'])
 })
+
+test('legacy Git agreement cannot authorize PDF upload, even when already agreed', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      get: async () => ({ ...notice, agreed: true }),
+      agree: () => assert.fail('no PDF scope'),
+      start: () => assert.fail('no analysis'),
+    }),
+  )
+  const pending = flow.requestConsent('feature-spec')
+  await tick()
+  assert.equal(flow.state.phase, 'blocked')
+  flow.setChecked(true)
+  await flow.confirm()
+  assert.equal(flow.state.checked, false)
+  flow.cancel()
+  assert.equal(await pending, false)
+})
+
+test('PDF consent waits for a scoped agreement and never starts repository analysis', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  const scoped = { ...notice, coveredData: ['FEATURE_SPEC_DOCUMENT'] }
+  const calls = []
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      get: async () => scoped,
+      agree: async (version) => {
+        calls.push(version)
+        return { ...scoped, agreed: true }
+      },
+      start: () => assert.fail('consent-only gate'),
+    }),
+  )
+  const pending = flow.requestConsent('feature-spec')
+  await tick()
+  assert.equal(flow.state.phase, 'consent')
+  await flow.confirm()
+  assert.deepEqual(calls, [])
+  flow.setChecked(true)
+  await flow.confirm()
+  assert.equal(await pending, true)
+  assert.deepEqual(calls, ['v1'])
+})
+
+test('PDF scope is rechecked after a version conflict and on save responses', async (t) => {
+  const { AnalysisFlow, ConsentVersionChanged } = await modules(t)
+  for (const conflict of [true, false]) {
+    let reads = 0
+    const flow = new AnalysisFlow(
+      () => {},
+      apis({
+        get: async () =>
+          ++reads === 1
+            ? { ...notice, coveredData: ['FEATURE_SPEC_DOCUMENT'] }
+            : notice,
+        agree: async () => {
+          if (conflict) throw new ConsentVersionChanged()
+          return { ...notice, agreed: true }
+        },
+        start: () => assert.fail('no upload or analysis'),
+      }),
+    )
+    const pending = flow.requestConsent('feature-spec')
+    await tick()
+    flow.setChecked(true)
+    await flow.confirm()
+    assert.equal(flow.state.phase, 'blocked')
+    flow.cancel()
+    assert.equal(await pending, false)
+  }
+})
+
+test('cancelled PDF consent ignores a late agreement response', async (t) => {
+  const { AnalysisFlow } = await modules(t)
+  const saving = deferred()
+  const scoped = { ...notice, coveredData: ['FEATURE_SPEC_DOCUMENT'] }
+  const flow = new AnalysisFlow(
+    () => {},
+    apis({
+      get: async () => scoped,
+      agree: async () => {
+        await saving.promise
+        return scoped
+      },
+    }),
+  )
+  const pending = flow.requestConsent('feature-spec')
+  await tick()
+  flow.setChecked(true)
+  const submission = flow.confirm()
+  flow.cancel()
+  assert.equal(await pending, false)
+  saving.resolve()
+  await submission
+  assert.equal(flow.state.phase, 'idle')
+})

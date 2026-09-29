@@ -8,6 +8,9 @@ import { API_PATHS, projectPaths, readData } from '../lib/api'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { cn } from '../lib/cn'
 import { skipProjectSpec } from '../lib/projectApi'
+import { useAnalysisStart } from '../analysis/useAnalysisStart'
+import { AiConsentModal } from '../components/AiConsentModal'
+import { AiConsentDraftPreview } from '../components/AiConsentDraftPreview'
 
 const MAX_SPEC_BYTES = 20 * 1024 * 1024
 const MAX_NAME_LENGTH = 100
@@ -52,6 +55,8 @@ export function NewProjectPage({
   useDocumentTitle(project ? '프로젝트 생성 이어하기' : '새 프로젝트')
   const navigate = useNavigate()
   const fileInput = useRef<HTMLInputElement>(null)
+  const consent = useAnalysisStart()
+  const pending = useRef(false)
   const requests = useRef(new AbortController())
   useEffect(() => {
     const controller = new AbortController()
@@ -72,6 +77,7 @@ export function NewProjectPage({
   const [submitError, setSubmitError] = useState('')
 
   function pickFile(picked: File | undefined | null) {
+    if (pending.current) return
     if (!picked) return
     const message = validateSpecFile(picked)
     setFileError(message)
@@ -86,16 +92,22 @@ export function NewProjectPage({
   }
 
   async function submit(withSpec: boolean) {
-    if (submitting) return
+    if (pending.current) return
     const trimmed = name.trim()
     if (!trimmed) {
       setNameError('프로젝트 이름을 입력해주세요.')
       return
     }
-    setSubmitting(true)
+    if (withSpec && !file) return
+    pending.current = true
     setSubmitError('')
     const signal = requests.current.signal
     try {
+      if (withSpec) {
+        const agreed = await consent.flow.requestConsent('feature-spec')
+        if (!agreed || consent.flow.disposed || signal.aborted) return
+      }
+      setSubmitting(true)
       let projectId = createdId
       if (projectId === null) {
         const response = await authenticatedFetch(
@@ -146,6 +158,7 @@ export function NewProjectPage({
           : '요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.',
       )
     } finally {
+      pending.current = false
       if (!signal.aborted) setSubmitting(false)
     }
   }
@@ -179,6 +192,14 @@ export function NewProjectPage({
             작업을 보여줍니다. 지금 등록하지 않아도 나중에 기능대조 탭에서
             등록할 수 있습니다.
           </p>
+        </div>
+
+        <div className="space-y-2 text-sm text-muted">
+          <p>
+            명세서를 등록하면 PDF를 OpenAI에 전송해 기능 항목을 추출합니다. 전송
+            전에 동의를 확인합니다.
+          </p>
+          {import.meta.env.DEV && !submitting && <AiConsentDraftPreview />}
         </div>
 
         <Card>
@@ -301,7 +322,7 @@ export function NewProjectPage({
         <div className="flex items-center gap-3 border-t border-line pt-4">
           <Button
             variant="secondary"
-            disabled={submitting}
+            disabled={submitting || consent.state.phase !== 'idle'}
             onClick={() => {
               if (!name.trim()) {
                 setNameError('프로젝트 이름을 입력해주세요.')
@@ -316,7 +337,7 @@ export function NewProjectPage({
           <Button
             size="lg"
             loading={submitting}
-            disabled={!file}
+            disabled={!file || consent.state.phase !== 'idle'}
             onClick={() => void submit(true)}
           >
             다음 · 저장소 연결 →
@@ -359,6 +380,7 @@ export function NewProjectPage({
           </p>
         </div>
       </Modal>
+      <AiConsentModal flow={consent.flow} state={consent.state} />
     </AppShell>
   )
 }

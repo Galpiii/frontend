@@ -6,6 +6,8 @@ export interface AiConsent {
   notice: string
   agreed: boolean
   agreedVersion: string | null
+  /** Optional contract extension; absent on legacy Git-only notices. */
+  coveredData?: string[]
 }
 
 export class ConsentRequired extends Error {}
@@ -20,7 +22,10 @@ function isConsent(value: unknown): value is AiConsent {
     typeof item.notice === 'string' &&
     item.notice.trim() !== '' &&
     typeof item.agreed === 'boolean' &&
-    (item.agreedVersion === null || typeof item.agreedVersion === 'string')
+    (item.agreedVersion === null || typeof item.agreedVersion === 'string') &&
+    (item.coveredData === undefined ||
+      (Array.isArray(item.coveredData) &&
+        item.coveredData.every((scope) => typeof scope === 'string')))
   )
 }
 

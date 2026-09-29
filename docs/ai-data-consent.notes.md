@@ -15,7 +15,7 @@
 
 - `backend/.../ai/PullRequestSummaryAiService.java`는 Responses API에 `store(false)`를 지정합니다. 응답 저장 옵션이며 악용 방지 로그까지 없애는 설정은 아닙니다.
 - `OpenAiConfig.java`에서 지역 엔드포인트를 명시하지 않습니다. 코드만으로 운영 계정의 지역·데이터 공유·보유 설정을 확인할 수 없습니다.
-- `FeatureSpecAiService.java`도 PDF를 Files API로 업로드하고 Responses API로 분석합니다. 삭제 요청은 있으나 실패 시 로그를 남깁니다. Git 데이터 동의서만으로 기능명세서 전송까지 안내했다고 간주하지 않습니다. 최종 동의 범위와 명세서 업로드 전 동의 흐름도 확인해야 합니다.
+- `FeatureSpecAiService.java`도 PDF를 Files API로 업로드하고 Responses API로 분석합니다. 삭제 요청은 있으나 실패 시 로그를 남깁니다. Git 데이터 동의서만으로 기능명세서 전송까지 안내했다고 간주하지 않습니다. 초안에 PDF 전송 범위를 추가했고, 프론트는 PDF 동의 범위를 명시한 서버 응답이 없으면 업로드를 차단합니다. 실제 서버의 범위 응답 및 전송 전 검증은 추가 구현이 필요합니다. 구체적인 계약은 `src/pages/README.md`를 참조합니다.
 
 ## 확정 후 반영
 

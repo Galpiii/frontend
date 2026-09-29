@@ -27,6 +27,7 @@ import {
   type ToastMessage,
 } from '../components/ui'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
+import { AiConsentDraftPreview } from '../components/AiConsentDraftPreview'
 
 const statuses: { tone: Tone; label: string }[] = [
   { tone: 'neutral', label: '분석 전' },
@@ -311,7 +312,12 @@ export function ComponentPreview() {
               공통 컴포넌트
             </span>
           }
-          actions={<Badge tone="accent">UI 미리보기</Badge>}
+          actions={
+            <>
+              <AiConsentDraftPreview />
+              <Badge tone="accent">UI 미리보기</Badge>
+            </>
+          }
         />
       }
       sidebar={

@@ -6,7 +6,6 @@ import App from './App.tsx'
 import { AuthProvider } from './auth/AuthProvider'
 import { consumeCallback, initializeSession } from './auth/bootstrap'
 
-// Consume and remove the code before rendering; share one exchange across StrictMode mounts.
 const session = initializeSession(
   consumeCallback(window.location, window.history),
 )

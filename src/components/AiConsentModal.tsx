@@ -2,6 +2,7 @@ import { Alert, Button, Checkbox, Modal } from './ui'
 import type { AnalysisFlow, FlowState } from '../analysis/analysisFlow'
 import { ConsentNotice } from './ConsentNotice'
 import { useState } from 'react'
+import { AiConsentDraftPreview } from './AiConsentDraftPreview'
 
 function ConsentChoices({
   flow,
@@ -18,7 +19,11 @@ function ConsentChoices({
   return (
     <div className="space-y-3 rounded-lg border border-line p-3">
       <Checkbox
-        label="[필수] 외부 AI를 이용한 Git 작업 데이터 처리에 동의합니다."
+        label={
+          flow.consentPurpose === 'feature-spec'
+            ? '[필수] 기능명세서의 외부 AI 처리에 동의합니다.'
+            : '[필수] 외부 AI를 이용한 Git 작업 데이터 처리에 동의합니다.'
+        }
         checked={ai}
         disabled={state.phase !== 'consent'}
         onChange={(event) => {
@@ -54,6 +59,7 @@ export function AiConsentModal({
   state: FlowState
 }) {
   const starting = state.phase === 'starting'
+  const featureSpec = flow.consentPurpose === 'feature-spec'
   return (
     <Modal
       open={state.phase !== 'idle'}
@@ -73,27 +79,35 @@ export function AiConsentModal({
             disabled={starting}
             onClick={() => flow.cancel()}
           >
-            취소
+            {state.phase === 'blocked' ? '돌아가기' : '취소'}
           </Button>
           {state.phase === 'error' ? (
             <Button onClick={() => flow.retry()}>다시 시도</Button>
           ) : (
-            <Button
-              disabled={!state.checked || state.phase !== 'consent'}
-              loading={state.phase === 'saving' || starting}
-              onClick={() => void flow.confirm()}
-            >
-              {starting
-                ? '분석 요청 중…'
-                : flow.consentOnly
-                  ? '동의하고 저장소 연결'
-                  : '동의하고 분석 시작'}
-            </Button>
+            state.phase !== 'blocked' && (
+              <Button
+                disabled={!state.checked || state.phase !== 'consent'}
+                loading={state.phase === 'saving' || starting}
+                onClick={() => void flow.confirm()}
+              >
+                {starting
+                  ? '분석 요청 중…'
+                  : flow.consentOnly
+                    ? featureSpec
+                      ? '동의하고 명세서 전송'
+                      : '동의하고 저장소 연결'
+                    : '동의하고 분석 시작'}
+              </Button>
+            )
           )}
         </>
       }
     >
       <div className="space-y-4">
+        {import.meta.env.DEV &&
+          ['consent', 'blocked', 'error'].includes(state.phase) && (
+            <AiConsentDraftPreview />
+          )}
         {state.message && (
           <Alert tone={state.phase === 'error' ? 'danger' : 'warning'}>
             {state.message}
@@ -106,7 +120,9 @@ export function AiConsentModal({
         )}
         {flow.consentOnly && (
           <p className="text-sm text-muted">
-            아직 저장소 연결과 분석을 시작하지 않았습니다. 동의 후 진행합니다.
+            {featureSpec
+              ? '선택한 PDF를 OpenAI에 전송해 기능 항목을 추출합니다. 아직 파일을 전송하거나 분석을 시작하지 않았습니다.'
+              : '아직 저장소 연결과 분석을 시작하지 않았습니다. 동의 후 진행합니다.'}
           </p>
         )}
         {starting && (
