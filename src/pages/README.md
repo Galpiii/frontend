@@ -64,7 +64,7 @@ Keep route screens in `pages`, reusable presentation components in `components/u
 
 ## Resuming creation
 
-Project cards in the list open `/projects/:projectId`. This reads `GET /projects/:projectId` instead of relying on potentially stale list data. A draft in `SPEC` reuses the creation form with its saved id and name; a saved document or the `REPOSITORIES` step opens repository selection. Active/archived projects and projects with linked repositories do not return to onboarding. Uploading a spec advances the step on the backend; skipping it explicitly PATCHes the step.
+Project cards in the list open `/project/:projectId` (the older `/projects/:projectId` route remains supported). This reads `GET /projects/:projectId` instead of relying on potentially stale list data. A draft in `SPEC` reuses the creation form with its saved id and name; a saved document or the `REPOSITORIES` step opens repository selection. Active/archived projects and projects with linked repositories do not return to onboarding. Uploading a spec advances the step on the backend; skipping it explicitly PATCHes the step.
 
 The project first exists on the server when the user submits the creation form. Before that, unsent name/file inputs are not a saved draft. A local PDF that has not finished uploading must be selected again, and repository selections that have not been linked are not persisted. Leaving the spec page cancels pending client requests; already committed server data remains available through the project list.
 
@@ -77,11 +77,11 @@ Both the project menu's analysis refresh and the first analysis after repository
 - Explicit confirmation POSTs `{ consentVersion }` to `/consents/ai-data`. Only a successful, validated agreement response permits analysis.
 - `409 CONSENT-002` reloads the current notice and clears the checkbox. `403 CONSENT-001` from the analysis endpoint also returns to consent; neither condition silently agrees to a new policy or automatically retries analysis.
 - Cancel/Escape dismiss during lookup or saving invalidates late responses. Backdrop clicks never dismiss the consent modal. A consent save already received by the server may persist, but cancellation never dispatches analysis. Once analysis is dispatched, closing is disabled until its bounded request settles.
-- Before the repository connection POST, `requestConsent()` checks/saves agreement without starting analysis. Cancelling stays on repository selection without linking anything. Connection loading starts only after agreement. After linking, analysis checks consent again in case the server policy changed; already-saved links are preserved on subsequent failure. Leaving the page ignores late responses.
+- Before the repository connection POST, `requestConsent()` checks/saves agreement without starting analysis. Cancelling stays on repository selection without linking anything. Connection loading starts only after agreement. After linking, navigate immediately to the project home. The server enforces consent at dispatch; a policy change is shown inline without reopening a modal. Already-saved links are preserved on failure.
 - Confirmed 4xx analysis refusals can be retried manually. Network failures, 5xx and unreadable success bodies have uncertain outcomes and are never automatically replayed.
 - No consent is cached in local storage. Each new analysis intent checks the server's current policy.
 
-`tests/analysisFlow.test.mjs` covers explicit consent, cancellation races, version changes, analysis consent rejection, duplicate submission, unmount and API error classification. Progress polling and analysis-result screens remain separate work.
+`tests/analysisFlow.test.mjs` covers explicit consent, cancellation races, version changes, analysis consent rejection, duplicate submission, unmount and API error classification. The project home polls project detail for the latest analysis status. Detailed analysis-result screens remain separate work.
 
 ## Session check before creation
 
@@ -93,6 +93,18 @@ At the user's request, the real consent modal now renders `docs/ai-data-consent.
 
 Consent status and saving still use the existing GET/POST `/consents/ai-data` API and the server-provided `currentVersion`. The local displayed document is not stored by that API: the backend still records its own version/text hash. This temporary integration enables development; publishing a matching backend notice/version remains separate work.
 
-PDF registration reuses the server-confirmed current agreement for subsequent projects. Checking agreement does not open a modal. It no longer requires the proposed `coveredData` response extension. After a successful consent POST, project creation (with session revalidation) and PDF upload proceed in that order. Cancellation, failed saving, unmount and unchecked choices do not authorize an upload. A version conflict clears the choices and requires confirmation again. Skipping the PDF continues without this consent step. After repository linking, the analysis request runs directly without reopening the consent flow, then navigates to /projects with result notices. Analysis failures never undo the saved repository links.
+PDF registration reuses the server-confirmed current agreement for subsequent projects. Checking agreement does not open a modal. It no longer requires the proposed `coveredData` response extension. After a successful consent POST, project creation (with session revalidation) and PDF upload proceed in that order. Cancellation, failed saving, unmount and unchecked choices do not authorize an upload. A version conflict clears the choices and requires confirmation again. Skipping the PDF continues without this consent step. After repository linking, navigate immediately to `/project/:projectId`; the project home dispatches the queued analysis intent without reopening the consent flow. Analysis failures never undo the saved repository links.
 
 `tests/analysisFlow.test.mjs` covers the legacy server response without scope fields, explicit PDF confirmation, version conflicts, cancellation races and existing repository analysis behavior.
+
+## Project home and analysis handoff
+
+The reference HTML's sidebar, current-state banner, summary metrics and repository rows form the project home. Only available project data is shown; PR summary counts, CI and feature matches are not invented. Creation still completes specification registration/skipping and repository linking before entering this home.
+
+Verified against the adjacent backend controllers/DTOs: `GET /projects/{id}` exposes `lastAnalysis` (run id/status), and `GET /analyses/{analysisRunId}` exposes per-repository results. This home uses the first endpoint, every five seconds while mounted; it does not invent an analysis-list endpoint. The latter is available for future detailed results.
+
+`analysis/projectAnalysis.ts` owns in-memory intents and submitted requests across route changes and StrictMode remounts. Linking queues an intent synchronously, then navigates. The home consumes it once, checks the latest server state before POST, and distinguishes local requesting, confirmed queued/running, refusal, and uncertain acceptance. The list's manual analysis action also hands off to this owner. A fresh page load has no intent and only reads state.
+
+A clear refusal offers a manual retry. Network/timeout/5xx, HTTP 408/425 and conflicts (409, which can mean an existing run) reconcile through GET only. A missing run is not proof that a timed-out POST was rejected; no automatic or manual resend is offered while that attempt remains uncertain. Old terminal run ids cannot confirm a new request. An unreadable status response stays a read error. A consent refusal is displayed inline with guidance to explicitly review consent through the list; no modal opens automatically after linking.
+
+Tests in `tests/analysisFlow.test.mjs` cover slow responses, duplicate intent consumption, route subscription disposal, manual retry, uncertain outcomes, stale completed runs, GET deduplication and reload restoration. Browser checks additionally exercise the real StrictMode routes with mocked APIs at desktop/mobile widths.
