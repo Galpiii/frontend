@@ -311,7 +311,11 @@ export function ComponentPreview() {
               공통 컴포넌트
             </span>
           }
-          actions={<Badge tone="accent">UI 미리보기</Badge>}
+          actions={
+            <>
+              <Badge tone="accent">UI 미리보기</Badge>
+            </>
+          }
         />
       }
       sidebar={
