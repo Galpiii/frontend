@@ -26,7 +26,10 @@ import {
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
-import { AnalysisRequestRejected } from '../lib/projectApi'
+import {
+  AnalysisRequestRejected,
+  startProjectAnalysis,
+} from '../lib/projectApi'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { ONBOARDING_STEPS } from './onboardingSteps'
 import {
@@ -391,14 +394,9 @@ export function ConnectReposPage() {
       ]
       try {
         setConfirmOpen(false)
-        const run = await analysis.flow.start(id)
+        const run = await startProjectAnalysis(id)
         if (analysis.flow.disposed) return
-        if (!run)
-          notices.push({
-            text: '분석을 시작하지 않았습니다. 프로젝트 목록에서 나중에 시작할 수 있습니다.',
-            tone: 'neutral',
-          })
-        if (run && run.inaccessibleRepositoryCount > 0)
+        if (run.inaccessibleRepositoryCount > 0)
           notices.push({
             text: `접근할 수 없는 저장소 ${run.inaccessibleRepositoryCount}개는 분석에서 제외됩니다.`,
             tone: 'warning',

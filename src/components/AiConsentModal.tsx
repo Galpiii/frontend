@@ -2,7 +2,7 @@ import { Alert, Button, Checkbox, Modal } from './ui'
 import type { AnalysisFlow, FlowState } from '../analysis/analysisFlow'
 import { ConsentNotice } from './ConsentNotice'
 import { useState } from 'react'
-import { AiConsentDraftPreview } from './AiConsentDraftPreview'
+import consentDocument from '../../docs/ai-data-consent.draft.md?raw'
 
 function ConsentChoices({
   flow,
@@ -13,9 +13,6 @@ function ConsentChoices({
 }) {
   const [ai, setAi] = useState(false)
   const [transfer, setTransfer] = useState(false)
-  // Do not collect an overseas-transfer agreement until it is covered by the
-  // server's versioned notice. Both choices are included in that one version.
-  const includesTransfer = state.consent?.notice.includes('국외 이전') ?? false
   return (
     <div className="space-y-3 rounded-lg border border-line p-3">
       <Checkbox
@@ -29,10 +26,10 @@ function ConsentChoices({
         onChange={(event) => {
           const checked = event.target.checked
           setAi(checked)
-          flow.setChecked(checked && (!includesTransfer || transfer))
+          flow.setChecked(checked && transfer)
         }}
       />
-      {includesTransfer && (
+      {
         <Checkbox
           label="[필수] 개인정보의 국외 이전에 동의합니다."
           checked={transfer}
@@ -43,7 +40,7 @@ function ConsentChoices({
             flow.setChecked(ai && checked)
           }}
         />
-      )}
+      }
       <p className="text-xs leading-relaxed text-muted">
         동의하지 않으면 취소를 눌러 돌아갈 수 있습니다.
       </p>
@@ -62,7 +59,7 @@ export function AiConsentModal({
   const featureSpec = flow.consentPurpose === 'feature-spec'
   return (
     <Modal
-      open={state.phase !== 'idle'}
+      open={state.phase !== 'idle' && state.phase !== 'checking'}
       onClose={() => flow.cancel()}
       closeDisabled={starting}
       closeOnBackdrop={false}
@@ -79,35 +76,29 @@ export function AiConsentModal({
             disabled={starting}
             onClick={() => flow.cancel()}
           >
-            {state.phase === 'blocked' ? '돌아가기' : '취소'}
+            취소
           </Button>
           {state.phase === 'error' ? (
             <Button onClick={() => flow.retry()}>다시 시도</Button>
           ) : (
-            state.phase !== 'blocked' && (
-              <Button
-                disabled={!state.checked || state.phase !== 'consent'}
-                loading={state.phase === 'saving' || starting}
-                onClick={() => void flow.confirm()}
-              >
-                {starting
-                  ? '분석 요청 중…'
-                  : flow.consentOnly
-                    ? featureSpec
-                      ? '동의하고 명세서 전송'
-                      : '동의하고 저장소 연결'
-                    : '동의하고 분석 시작'}
-              </Button>
-            )
+            <Button
+              disabled={!state.checked || state.phase !== 'consent'}
+              loading={state.phase === 'saving' || starting}
+              onClick={() => void flow.confirm()}
+            >
+              {starting
+                ? '분석 요청 중…'
+                : flow.consentOnly
+                  ? featureSpec
+                    ? '동의하고 명세서 전송'
+                    : '동의하고 저장소 연결'
+                  : '동의하고 분석 시작'}
+            </Button>
           )}
         </>
       }
     >
       <div className="space-y-4">
-        {import.meta.env.DEV &&
-          ['consent', 'blocked', 'error'].includes(state.phase) && (
-            <AiConsentDraftPreview />
-          )}
         {state.message && (
           <Alert tone={state.phase === 'error' ? 'danger' : 'warning'}>
             {state.message}
@@ -132,15 +123,12 @@ export function AiConsentModal({
         )}
         {state.consent && (
           <>
-            <p className="text-xs text-muted">
-              고지 버전: {state.consent.currentVersion}
-            </p>
             <div
               tabIndex={0}
               aria-label="외부 AI 전송 동의서"
               className="max-h-[40dvh] overflow-y-auto rounded-lg border border-line bg-subtle p-4 sm:p-5"
             >
-              <ConsentNotice text={state.consent.notice} />
+              <ConsentNotice text={consentDocument} />
             </div>
             <ConsentChoices
               key={state.consent.currentVersion}

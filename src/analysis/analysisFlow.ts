@@ -10,14 +10,7 @@ import { startProjectAnalysis } from '../lib/projectApi.ts'
 
 type Run = Awaited<ReturnType<typeof startProjectAnalysis>>
 export interface FlowState {
-  phase:
-    | 'idle'
-    | 'checking'
-    | 'consent'
-    | 'saving'
-    | 'starting'
-    | 'error'
-    | 'blocked'
+  phase: 'idle' | 'checking' | 'consent' | 'saving' | 'starting' | 'error'
   consent?: AiConsent
   checked: boolean
   message?: string
@@ -115,7 +108,6 @@ export class AnalysisFlow {
     try {
       const consent = await this.api.get(operation.controller.signal)
       if (this.active !== operation) return
-      if (!this.checkCoverage(consent)) return
       if (consent.agreed && !force) await this.dispatch()
       else this.update({ phase: 'consent', consent, checked: false, message })
     } catch (error) {
@@ -135,12 +127,8 @@ export class AnalysisFlow {
       return
     this.update({ phase: 'saving', consent, checked: true })
     try {
-      const saved = await this.api.agree(
-        consent.currentVersion,
-        operation.controller.signal,
-      )
+      await this.api.agree(consent.currentVersion, operation.controller.signal)
       if (this.active !== operation) return
-      if (!this.checkCoverage(saved)) return
       await this.dispatch()
     } catch (error) {
       if (this.active !== operation) return
@@ -151,21 +139,6 @@ export class AnalysisFlow {
         )
       } else this.preflightError(operation, error)
     }
-  }
-
-  private checkCoverage(consent: AiConsent) {
-    if (
-      this.active?.purpose !== 'feature-spec' ||
-      consent.coveredData?.includes('FEATURE_SPEC_DOCUMENT')
-    )
-      return true
-    this.update({
-      phase: 'blocked',
-      checked: false,
-      message:
-        '기능명세서의 외부 AI 처리에 대한 정식 동의서가 아직 준비되지 않았습니다. 파일은 전송하지 않았습니다. 돌아간 뒤 “명세서는 나중에 등록”으로 계속할 수 있습니다.',
-    })
-    return false
   }
 
   private preflightError(operation: typeof this.active, error: unknown) {

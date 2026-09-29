@@ -87,35 +87,12 @@ Both the project menu's analysis refresh and the first analysis after repository
 
 Creating a new project passes `verifySession: true` to `authenticatedFetch`. It refreshes the session before the mutation even when the in-memory access token has time left. A missing/rejected refresh cookie (401) expires the UI session and prevents the project POST. Transient failures also prevent creation and remain retryable. This is a client-side recheck; deleting a refresh cookie does not itself revoke an already issued access token on the backend.
 
-## Expanded consent document
+## Current consent flow during development
 
-`docs/ai-data-consent.draft.md` adapts the requested document to 갈피. It is an unpublished draft: provider, destination, retention/training policy, actual transmitted fields, withdrawal route and effective date still need confirmation. Do not publish the bracketed placeholders. Register the finalized text as a **new backend consent version**, preserving the existing version/text/hash history. The frontend continues rendering `GET /consents/ai-data` so the displayed document matches the saved version rather than silently replacing it with local copy.
+At the user's request, the real consent modal now renders `docs/ai-data-consent.draft.md` directly, in both development and production builds. There is no separate preview or draft-only blocking state. Both AI processing and overseas-transfer choices must be checked before confirmation. Future text edits belong in that Markdown file.
 
-`ConsentNotice` supports three heading levels, paragraphs, lists, bold text and blockquotes without rendering HTML. When the versioned document includes 국외 이전, the modal requires separate unchecked AI-processing and overseas-transfer checkboxes before the existing combined version-consent POST. The present API stores a single version agreement, not separate per-purpose records; separate audit records would require a backend contract change.
+Consent status and saving still use the existing GET/POST `/consents/ai-data` API and the server-provided `currentVersion`. The local displayed document is not stored by that API: the backend still records its own version/text hash. This temporary integration enables development; publishing a matching backend notice/version remains separate work.
 
-## Draft preview and feature-spec consent
+PDF registration reuses the server-confirmed current agreement for subsequent projects. Checking agreement does not open a modal. It no longer requires the proposed `coveredData` response extension. After a successful consent POST, project creation (with session revalidation) and PDF upload proceed in that order. Cancellation, failed saving, unmount and unchecked choices do not authorize an upload. A version conflict clears the choices and requires confirmation again. Skipping the PDF continues without this consent step. After repository linking, the analysis request runs directly without reopening the consent flow, then navigates to /projects with result notices. Analysis failures never undo the saved repository links.
 
-In development, the new-project page, component gallery (`/preview`), and stable consent-modal states expose **동의서 초안 미리보기**. The preview renders `docs/ai-data-consent.draft.md` in the same document renderer. It contains no API calls; its checkboxes only demonstrate the layout and the agreement button is always disabled. Closing it restores the previous screen/modal. The preview and draft text are excluded from production output.
-
-Before creating a project for a selected PDF, `NewProjectPage` awaits `requestConsent('feature-spec')`. Cancelling retains the name and file without creating a project or uploading the PDF. Skipping the PDF does not request AI consent. Once agreement succeeds, the existing creation/session-validation/upload path runs once. In-progress form submissions are guarded synchronously to prevent duplicate requests.
-
-The current backend notice covers Git data only. PDF uploads therefore remain **blocked with a skip option** until the backend publishes a finalized notice that explicitly covers PDFs and implements the following contract extension. This is not an existing backend capability:
-
-- Add optional `coveredData: string[]` to both GET and POST `/consents/ai-data` responses. Include `FEATURE_SPEC_DOCUMENT` only for a finalized version whose actual text covers PDF transfer. Missing coverage must not inherit a previous Git agreement.
-- The frontend verifies this field on lookup and after saving, including after version conflicts. Unknown or absent scopes do not authorize PDF upload.
-- The backend must enforce current scoped consent before accepting/processing `/projects/{id}/feature-specs`, and again before any asynchronous external AI transmission as appropriate. Client-side gating alone cannot enforce this for other clients or close a version-change race.
-- Preserve the existing version/text/hash history; never label the unpublished draft as a saved consent version. The actual server has not been changed in this frontend task.
-
-Example future response (illustrative version, not a real published policy):
-
-```json
-{
-  "data": {
-    "currentVersion": "approved-version",
-    "notice": "Finalized notice including PDF transfer",
-    "agreed": false,
-    "agreedVersion": null,
-    "coveredData": ["FEATURE_SPEC_DOCUMENT"]
-  }
-}
-```
+`tests/analysisFlow.test.mjs` covers the legacy server response without scope fields, explicit PDF confirmation, version conflicts, cancellation races and existing repository analysis behavior.

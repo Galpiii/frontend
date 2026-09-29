@@ -10,7 +10,6 @@ import { cn } from '../lib/cn'
 import { skipProjectSpec } from '../lib/projectApi'
 import { useAnalysisStart } from '../analysis/useAnalysisStart'
 import { AiConsentModal } from '../components/AiConsentModal'
-import { AiConsentDraftPreview } from '../components/AiConsentDraftPreview'
 
 const MAX_SPEC_BYTES = 20 * 1024 * 1024
 const MAX_NAME_LENGTH = 100
@@ -199,7 +198,6 @@ export function NewProjectPage({
             명세서를 등록하면 PDF를 OpenAI에 전송해 기능 항목을 추출합니다. 전송
             전에 동의를 확인합니다.
           </p>
-          {import.meta.env.DEV && !submitting && <AiConsentDraftPreview />}
         </div>
 
         <Card>
