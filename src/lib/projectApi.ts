@@ -8,7 +8,21 @@ export interface ProjectDetail {
   status: string
   onboardingStep: string
   repositories: { repositoryId: number; fullName: string }[]
+  lastAnalysis?: {
+    analysisRunId: number
+    status: string
+    requestedAt?: string
+  } | null
   specDocument: { fileName: string } | null
+}
+
+function isLastAnalysis(value: unknown): boolean {
+  if (value === null || value === undefined) return true
+  if (typeof value !== 'object') return false
+  const run = value as Record<string, unknown>
+  return (
+    Number.isSafeInteger(run.analysisRunId) && typeof run.status === 'string'
+  )
 }
 
 function isProjectDetail(value: unknown): value is ProjectDetail {
@@ -19,6 +33,7 @@ function isProjectDetail(value: unknown): value is ProjectDetail {
     typeof project.name === 'string' &&
     typeof project.status === 'string' &&
     typeof project.onboardingStep === 'string' &&
+    isLastAnalysis(project.lastAnalysis) &&
     Array.isArray(project.repositories) &&
     project.repositories.every((repo: unknown) => {
       if (typeof repo !== 'object' || repo === null) return false
@@ -81,7 +96,8 @@ function isAnalysisRun(value: unknown): value is AnalysisRun {
 }
 
 /**
- * A 4xx refusal confirms that the request was rejected.
+ * Most 4xx responses confirm rejection. 408/425 are ambiguous; 409 may
+ * indicate an existing run, so these must be reconciled through status reads.
  * A 5xx or any other failure — a dropped connection, a timeout, an unreadable body
  * after a 2xx — leaves the run's fate unknown, and the user must not be told to
  * request it again.
@@ -105,7 +121,12 @@ export async function startProjectAnalysis(
     const body = await response.json().catch(() => null)
     if (response.status === 403 && body?.code === 'CONSENT-001')
       throw new ConsentRequired()
-    if (response.status < 500) throw new AnalysisRequestRejected()
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      ![408, 409, 425].includes(response.status)
+    )
+      throw new AnalysisRequestRejected()
     throw new Error('Analysis outcome unknown')
   }
   return readData(response, isAnalysisRun, '분석 응답을 확인할 수 없습니다.')

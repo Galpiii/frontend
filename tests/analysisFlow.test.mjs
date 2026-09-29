@@ -15,6 +15,7 @@ async function modules(t) {
     'lib/consentApi',
     'lib/projectApi',
     'analysis/analysisFlow',
+    'analysis/projectAnalysis',
   ]) {
     await mkdir(join(dir, file.split('/')[0]), { recursive: true })
     const source = await readFile(
@@ -37,6 +38,7 @@ async function modules(t) {
   let result = {}
   for (const file of [
     'analysis/analysisFlow',
+    'analysis/projectAnalysis',
     'lib/consentApi',
     'lib/projectApi',
     'auth/session',
@@ -330,6 +332,13 @@ test('real API wrappers send correct version and distinguish consent codes from 
   await assert.rejects(startProjectAnalysis(1), ConsentRequired)
   reply = Response.json({ code: 'OTHER' }, { status: 403 })
   await assert.rejects(startProjectAnalysis(1), AnalysisRequestRejected)
+  for (const status of [408, 409, 425]) {
+    reply = Response.json({}, { status })
+    await assert.rejects(
+      startProjectAnalysis(1),
+      (e) => !(e instanceof AnalysisRequestRejected),
+    )
+  }
   reply = Response.json({}, { status: 503 })
   await assert.rejects(
     startProjectAnalysis(1),
@@ -471,4 +480,207 @@ test('cancelled PDF consent ignores a late agreement response', async (t) => {
   saving.resolve()
   await submission
   assert.equal(flow.state.phase, 'idle')
+})
+
+const projectFixture = (lastAnalysis = null) => ({
+  id: 7,
+  name: 'Galpi',
+  status: 'ACTIVE',
+  onboardingStep: 'COMPLETED',
+  repositories: [{ repositoryId: 1, fullName: 'galpi/frontend' }],
+  specDocument: null,
+  lastAnalysis,
+})
+
+test('navigation intent is synchronous; delayed POST survives remount/StrictMode consumption exactly once', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  const waiting = deferred()
+  let posts = 0
+  let latest = null
+  const store = new ProjectAnalysisStore({
+    get: async () => projectFixture(latest),
+    start: async () => {
+      posts++
+      await waiting.promise
+      latest = { analysisRunId: 8, status: 'QUEUED' }
+      return run
+    },
+  })
+  store.queue(7)
+  assert.equal(store.get(7).phase, 'queued')
+  assert.equal(posts, 0) // connector can navigate before any POST
+  const pending = store.consume(7)
+  await tick()
+  const unsubscribe = store.subscribe(() => {})
+  unsubscribe() // navigating away cannot abort the owner
+  await store.consume(7)
+  store.queue(7)
+  await store.consume(7)
+  assert.equal(store.get(7).phase, 'requesting')
+  assert.equal(posts, 1)
+  waiting.resolve()
+  await pending
+  assert.equal(store.get(7).phase, 'confirmed')
+  assert.equal(store.get(7).project.lastAnalysis.status, 'QUEUED')
+  latest = { analysisRunId: 8, status: 'RUNNING' }
+  await store.refresh(7)
+  assert.equal(store.get(7).project.lastAnalysis.status, 'RUNNING')
+  latest = { analysisRunId: 8, status: 'COMPLETED' }
+  await store.refresh(7)
+  assert.equal(store.get(7).project.lastAnalysis.status, 'COMPLETED')
+  assert.equal(posts, 1)
+})
+
+test('explicit rejection permits one manual retry and preserves linked repositories', async (t) => {
+  const { ProjectAnalysisStore, AnalysisRequestRejected } = await modules(t)
+  let posts = 0
+  const store = new ProjectAnalysisStore({
+    get: async () => projectFixture(),
+    start: async () => {
+      if (++posts === 1) throw new AnalysisRequestRejected()
+      return run
+    },
+  })
+  store.queue(7)
+  await store.consume(7)
+  assert.equal(store.get(7).phase, 'rejected')
+  assert.equal(store.get(7).project.repositories.length, 1)
+  await store.refresh(7)
+  assert.equal(posts, 1)
+  store.retry(7)
+  store.retry(7)
+  await tick()
+  assert.equal(posts, 2)
+  assert.equal(store.get(7).phase, 'confirmed')
+})
+
+test('ambiguous failure never replays; old completed run is not mistaken for new acceptance', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  for (const error of [
+    new Error('network'),
+    new DOMException('timeout', 'TimeoutError'),
+    new Error('503'),
+  ]) {
+    let posts = 0
+    let latest = { analysisRunId: 4, status: 'COMPLETED' }
+    const store = new ProjectAnalysisStore({
+      get: async () => projectFixture(latest),
+      start: async () => {
+        posts++
+        throw error
+      },
+    })
+    store.queue(7)
+    await store.consume(7)
+    assert.equal(store.get(7).phase, 'unknown')
+    store.retry(7)
+    store.queue(7)
+    await store.consume(7)
+    await store.refresh(7)
+    assert.equal(posts, 1)
+    assert.equal(store.get(7).phase, 'unknown')
+    latest = { analysisRunId: 5, status: 'COMPLETED' }
+    await store.refresh(7)
+    assert.equal(store.get(7).phase, 'confirmed')
+    assert.equal(posts, 1)
+  }
+})
+
+test('reload only restores server state; no pending intent is persisted or inferred', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  for (const latest of [
+    null,
+    { analysisRunId: 8, status: 'RUNNING' },
+    { analysisRunId: 8, status: 'FAILED' },
+  ]) {
+    const store = new ProjectAnalysisStore({
+      get: async () => projectFixture(latest),
+      start: () => assert.fail('reload must never POST'),
+    })
+    await store.consume(7)
+    await store.refresh(7)
+    assert.deepEqual(store.get(7).project.lastAnalysis, latest)
+  }
+})
+
+test('preflight catches already-running analysis and deduplicates overlapping status reads', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  let reads = 0
+  const store = new ProjectAnalysisStore({
+    get: async () => {
+      reads++
+      return projectFixture({ analysisRunId: 8, status: 'RUNNING' })
+    },
+    start: () => assert.fail('already running'),
+  })
+  store.queue(7)
+  await store.consume(7)
+  assert.equal(store.get(7).phase, 'confirmed')
+  const before = reads
+  await Promise.all([store.refresh(7), store.refresh(7), store.refresh(7)])
+  assert.equal(reads, before + 1)
+})
+
+test('status lookup failure does not authorize retry of an ambiguous request', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  let reads = 0
+  let posts = 0
+  const store = new ProjectAnalysisStore({
+    get: async () => {
+      if (++reads > 1) throw new Error('offline')
+      return projectFixture()
+    },
+    start: async () => {
+      posts++
+      throw new Error('timeout')
+    },
+  })
+  store.queue(7)
+  await store.consume(7)
+  assert.equal(store.get(7).phase, 'unknown')
+  assert.ok(store.get(7).error)
+  await store.refresh(7)
+  store.retry(7)
+  assert.equal(posts, 1)
+})
+
+test('a status read started before a new intent cannot overwrite its baseline', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  const oldRead = deferred()
+  const waiting = deferred()
+  let reads = 0
+  const store = new ProjectAnalysisStore({
+    get: async () =>
+      ++reads === 1
+        ? oldRead.promise
+        : projectFixture({ analysisRunId: 5, status: 'COMPLETED' }),
+    start: async () => {
+      await waiting.promise
+      return run
+    },
+  })
+  const reading = store.refresh(7)
+  store.queue(7)
+  const posting = store.consume(7)
+  await tick()
+  oldRead.resolve(projectFixture({ analysisRunId: 4, status: 'RUNNING' }))
+  await reading
+  assert.equal(store.get(7).project.lastAnalysis.analysisRunId, 5)
+  assert.equal(store.get(7).phase, 'requesting')
+  waiting.resolve()
+  await posting
+})
+
+test('failed preflight is retryable but dispatches nothing', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  const store = new ProjectAnalysisStore({
+    get: async () => {
+      throw new Error('offline')
+    },
+    start: () => assert.fail('no POST after failed preflight'),
+  })
+  store.queue(7)
+  await store.consume(7)
+  assert.equal(store.get(7).phase, 'rejected')
+  assert.equal(store.get(7).preflightFailed, true)
 })
