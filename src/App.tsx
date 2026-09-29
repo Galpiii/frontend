@@ -45,6 +45,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/new" element={<NewProjectPage />} />
+        <Route path="/project/:projectId" element={<ProjectDetailPage />} />
         <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
         <Route
           path="/projects/:projectId/repositories"
