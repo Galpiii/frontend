@@ -265,7 +265,7 @@ export function ProjectsPage() {
   const hasProjects = (result?.projects.length ?? 0) > 0
 
   return (
-    <AppShell header={<AppHeader context="프로젝트" />}>
+    <AppShell header={<AppHeader />}>
       <div className="mx-auto max-w-[1120px] space-y-5 py-1 sm:py-2">
         <SectionHeader
           level={1}

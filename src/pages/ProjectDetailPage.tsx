@@ -77,16 +77,7 @@ function ProjectHome({ projectId }: { projectId: number }) {
           : '기능명세서와 GitHub 저장소의 분석 상태를 확인하세요.'
   return (
     <AppShell
-      header={
-        <AppHeader
-          context={project?.name ?? '프로젝트'}
-          actions={
-            <Link to="/projects" className="text-[13px] font-bold">
-              모든 프로젝트
-            </Link>
-          }
-        />
-      }
+      header={<AppHeader />}
       sidebar={
         <Sidebar
           activeId="home"
