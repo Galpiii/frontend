@@ -119,8 +119,8 @@ Confirmed against both local backend source and running `/v3/api-docs` on 2026-0
 - `GET /analyses/{id}`: individual collection states and incomplete reasons. Collection completion is distinct from PR summary completion.
 - `?tab=prs`: paginated PR list with repository/status filters and safe GitHub source links.
 - `?tab=match`: 기능대조 진입점. 기존 `?tab=spec` 링크도 같은 화면으로 복원한다. 기존 프로젝트에서 명세서 PDF를 등록할 때 동일한 명시적 동의 흐름을 사용하며, 프로젝트 재생성이나 저장소 온보딩으로 돌아가지 않는다. 미등록, 추출 대기/진행, 실패, 완료, 알 수 없는 서버 상태를 구분한다.
-- 기능명세서 업로드의 네트워크 오류, 408/425, 5xx는 접수 여부가 불확실한 상태로 처리한다. 자동 재전송하지 않고 `GET /projects/{id}`로 등록 여부를 확인한 뒤에만 다시 업로드할 수 있다.
-- 기능별 대조 결과 보기는 현재 제공 범위를 명확히 안내하고 PR 목록으로 연결한다. 기능 목록 조회·검토, 명세서 교체와 실제 기능–PR 대조는 지원 API가 생길 때까지 동작하는 것처럼 표현하지 않는다.
+- 기능명세서 업로드의 네트워크 오류, 408/425, 5xx는 접수 여부가 불확실한 상태로 처리한다. 자동 재전송하지 않고 `GET /projects/{id}`로 새 문서 ID를 확인한다. 기존 문서나 문서 없음이 조회되어도 늦게 처리될 요청의 거절을 입증하지 않으므로 재전송을 허용하지 않는다.
+- 기능별 대조 결과 보기는 현재 제공 범위를 명확히 안내하고 PR 목록으로 연결한다. 기능 목록 조회·검토와 실제 기능–PR 대조는 지원 API가 확인될 때까지 동작하는 것처럼 표현하지 않는다.
 - Repository addition reuses the connection flow. A per-row confirmation calls `DELETE /projects/{id}/repositories/{repositoryId}` with the internal repository id, then refreshes data. Active/uncertain analysis disables removal.
 
 Feature–PR matching, CI, sharing and a project description are not currently provided by the relevant backend APIs. The connected-repository response does not contain language (the GitHub selection API does, but querying every installation merely to decorate the overview is avoided). The screenshot's unsupported fields are omitted or explicitly marked as pending. The overview's “확인 필요” count is specifically failed PR summaries, not a fabricated combined review score. Header logo navigation remains shared; removed header context/actions stay removed.
@@ -144,3 +144,17 @@ Analysis management uses `POST /projects/{id}/pull-request-analyses/retry` to re
 PR detail calls `GET /pull-requests/{id}` and checks membership in the current project's repositories. It separates GitHub metadata/files from AI summary/change type/time, shows failed/pending/missing results and truncation notices, escapes remote content, and restricts source links to HTTPS GitHub URLs.
 
 Collection criteria remain read-only (MERGED/default branch/all time). Open/Closed collection, configurable periods, PR exclusions and feature matching are not supported by the current backend and are not presented as working controls. No new backend changes are needed for these panels.
+
+## Feature specification replacement
+
+Verified against the adjacent backend's `FeatureSpecApi`, `FeatureSpecController`, and `SpecDocumentWriter` on 2026-10-04: replacement uses multipart `PUT /projects/{id}/feature-specs` with the `file` field. Initial registration continues to use POST. There is no fallback from PUT to POST, including on older-server 404 responses.
+
+The completed and failed extraction views allow a replacement only when a document ID is available. A confirmation names both files and states the backend policy: existing extracted features and merge/split/confirmation review records are deleted irreversibly. The user confirms this before the existing AI consent flow. No feature–PR result retention policy is inferred. PENDING/PROCESSING and unknown states do not offer replacement.
+
+`analysis/featureSpecUpload.ts` owns request state across feature-view unmounts and route changes. Consent cancellation and unmount during preflight prevent dispatch. A fresh GET checks that the document ID and replaceable status still match before PUT. This is a client preflight, not a server conditional-write guarantee; another client can still change the document after that read. The current API offers no conditional document ID parameter.
+
+Explicit rejection allows a new manual intent. Network errors, HTTP 408/425 and all 5xx remain uncertain, including replacement failures that might have removed the original. The UI never claims the old document survived a 5xx. Status checks perform GET only; a different server document ID releases the completed/uncertain request lock. A missing or unchanged document does not authorize resending. Request state is in memory for the current page lifetime; reload restores server state and never automatically sends a mutation.
+
+`npm test` covers PUT multipart, rejection/uncertainty, shared ownership, consent cancellation, preflight changes, and explicit retries. The browser regression script `tests/browser/featureSpec.mjs` exercises the actual UI with mocked APIs: replacement confirmation/cancel, existing consent reuse, initial upload with both consent checkboxes, 400/409 refusal, network/503 uncertainty, navigation, mobile layout and Escape focus return. It requires an externally available `playwright-core` and Chrome; it does not call the real backend or OpenAI.
+
+Start Vite with the API origin `http://localhost:8080`, then run `PLAYWRIGHT_MODULE=/absolute/path/to/playwright-core/index.mjs node tests/browser/featureSpec.mjs`. `FRONTEND_URL` and `CHROME_PATH` can override the local frontend address and browser binary. The browser dependency is not added to the application's production dependencies.
