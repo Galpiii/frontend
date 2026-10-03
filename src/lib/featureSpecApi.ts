@@ -47,12 +47,25 @@ export async function uploadFeatureSpec(
   file: File,
   signal?: AbortSignal,
 ) {
+  return sendFeatureSpec(projectId, file, 'POST', signal)
+}
+
+export async function replaceFeatureSpec(projectId: number, file: File) {
+  return sendFeatureSpec(projectId, file, 'PUT')
+}
+
+async function sendFeatureSpec(
+  projectId: number,
+  file: File,
+  method: 'POST' | 'PUT',
+  signal?: AbortSignal,
+) {
   const body = new FormData()
   body.append('file', file)
   let response: Response
   try {
     response = await authenticatedFetch(projectPaths.featureSpecs(projectId), {
-      method: 'POST',
+      method,
       body,
       signal,
     })
@@ -68,7 +81,9 @@ export async function uploadFeatureSpec(
     )
   const message =
     response.status === 409
-      ? '이미 등록된 기능명세서가 있습니다. 서버 상태를 확인해주세요.'
+      ? method === 'PUT'
+        ? '기능 추출 중이거나 문서가 변경되어 교체할 수 없습니다. 서버 상태를 확인해주세요.'
+        : '이미 등록된 기능명세서가 있습니다. 서버 상태를 확인해주세요.'
       : response.status === 413
         ? '파일 크기는 20MB 이하여야 합니다.'
         : [400, 415, 422].includes(response.status)
