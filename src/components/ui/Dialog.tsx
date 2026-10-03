@@ -65,7 +65,7 @@ function Overlay({
       className={cn(
         'fixed border border-line bg-surface p-0 text-ink shadow-dialog',
         drawer
-          ? 'inset-y-0 left-auto right-0 m-0 h-dvh max-h-dvh w-[480px] max-w-[94vw]'
+          ? 'inset-y-0 left-auto right-0 m-0 h-dvh max-h-dvh w-[620px] max-w-[100vw]'
           : 'inset-0 m-auto max-h-[90dvh] w-[520px] max-w-[calc(100vw-32px)] rounded-[14px]',
       )}
     >
@@ -76,8 +76,11 @@ function Overlay({
         )}
       >
         <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
-          <div>
-            <h2 id={`${id}-title`} className="text-lg font-extrabold">
+          <div className="min-w-0 flex-1">
+            <h2
+              id={`${id}-title`}
+              className="break-words text-lg font-extrabold"
+            >
               {title}
             </h2>
             {description && (

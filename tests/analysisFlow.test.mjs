@@ -14,6 +14,9 @@ async function modules(t) {
     'auth/session',
     'lib/consentApi',
     'lib/projectApi',
+    'lib/projectOverviewApi',
+    'lib/pullRequestApi',
+    'analysis/prRetry',
     'analysis/analysisFlow',
     'analysis/projectAnalysis',
   ]) {
@@ -41,6 +44,9 @@ async function modules(t) {
     'analysis/projectAnalysis',
     'lib/consentApi',
     'lib/projectApi',
+    'lib/projectOverviewApi',
+    'lib/pullRequestApi',
+    'analysis/prRetry',
     'auth/session',
   ])
     result = {
@@ -683,4 +689,310 @@ test('failed preflight is retryable but dispatches nothing', async (t) => {
   await store.consume(7)
   assert.equal(store.get(7).phase, 'rejected')
   assert.equal(store.get(7).preflightFailed, true)
+})
+
+test('overview uses filtered server totals for completed counts, not total minus failed', async (t) => {
+  const { exchangeLoginCode, loadOverview } = await modules(t)
+  const paths = []
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = new URL(url)
+    paths.push(u.pathname + u.search)
+    if (u.pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    if (u.pathname.endsWith('/summary'))
+      return Response.json({
+        data: {
+          totalCount: 20,
+          failedCount: 2,
+          pendingCount: 10,
+          repositories: [
+            {
+              id: 1,
+              fullName: 'galpi/frontend',
+              pullRequestCount: 20,
+              failedCount: 2,
+            },
+          ],
+        },
+      })
+    if (u.pathname === '/projects/7/analyses/repositories')
+      return Response.json({
+        data: [
+          {
+            repositoryId: 1,
+            analysisRunId: 8,
+            status: 'COMPLETED',
+            incompleteReasons: ['PATCH_OMITTED'],
+          },
+        ],
+      })
+    assert.equal(u.searchParams.get('analysisStatus'), 'COMPLETED')
+    assert.equal(u.searchParams.get('size'), '1')
+    return Response.json({
+      data: { totalElements: 8, totalPages: 8, pullRequests: [] },
+    })
+  })
+  await exchangeLoginCode('fixture')
+  const data = await loadOverview(7, [1], 8, new AbortController().signal)
+  assert.equal(data.completed, 8)
+  assert.equal(data.repositoryCompleted[1], 8)
+  assert.equal(data.overview.totalCount, 20)
+  assert.equal(data.partial, false)
+  assert.deepEqual(data.repositoryStatuses[0].incompleteReasons, [
+    'PATCH_OMITTED',
+  ])
+  assert.ok(paths.some((p) => p.includes('repositoryId=1')))
+})
+
+test('overview partial failures preserve available facts and never report missing counts as zero', async (t) => {
+  const { exchangeLoginCode, loadOverview } = await modules(t)
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = new URL(url)
+    if (u.pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    if (u.pathname.endsWith('/summary'))
+      return Response.json({}, { status: 503 })
+    if (u.searchParams.get('repositoryId') === '2')
+      return Response.json({
+        data: { totalElements: -1, totalPages: 0, pullRequests: [] },
+      })
+    return Response.json({
+      data: { totalElements: 4, totalPages: 4, pullRequests: [] },
+    })
+  })
+  await exchangeLoginCode('fixture')
+  const data = await loadOverview(
+    7,
+    [1, 2],
+    undefined,
+    new AbortController().signal,
+  )
+  assert.equal(data.overview, null)
+  assert.equal(data.completed, 4)
+  assert.equal(data.repositoryCompleted[1], 4)
+  assert.equal(data.repositoryCompleted[2], undefined)
+  assert.deepEqual(data.repositoryStatuses, [])
+  assert.equal(data.partial, true)
+})
+
+test('PR filters and pagination use the existing endpoint and reject unsafe external links', async (t) => {
+  const { exchangeLoginCode, getPrPage, githubUrl, displayDate } =
+    await modules(t)
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = new URL(url)
+    if (u.pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    assert.equal(u.pathname, '/projects/7/pull-requests')
+    assert.equal(u.searchParams.get('page'), '2')
+    assert.equal(u.searchParams.get('repositoryId'), '1')
+    assert.equal(u.searchParams.get('analysisStatus'), 'FAILED')
+    return Response.json({
+      data: { totalElements: 0, totalPages: 0, pullRequests: [] },
+    })
+  })
+  await exchangeLoginCode('fixture')
+  await getPrPage(7, {
+    repositoryId: 1,
+    analysisStatus: 'FAILED',
+    page: 2,
+    size: 20,
+  })
+  assert.equal(githubUrl('javascript:alert(1)'), undefined)
+  assert.equal(githubUrl('https://github.com.evil.test/pr'), undefined)
+  assert.equal(
+    githubUrl('https://github.com/galpi/frontend/pull/1'),
+    'https://github.com/galpi/frontend/pull/1',
+  )
+  assert.equal(displayDate('invalid'), '기록 없음')
+})
+
+test('selected analysis and its manual retry preserve the exact newly-linked repository scope', async (t) => {
+  const { ProjectAnalysisStore, AnalysisRequestRejected } = await modules(t)
+  const scopes = []
+  const store = new ProjectAnalysisStore({
+    get: async () => projectFixture(),
+    start: async (id, signal, repositoryIds) => {
+      scopes.push(repositoryIds)
+      if (scopes.length === 1) throw new AnalysisRequestRejected()
+      return run
+    },
+  })
+  const selection = [2]
+  store.queue(7, selection)
+  selection.push(1) // caller mutation must not widen the intent
+  await store.consume(7)
+  store.retry(7)
+  await tick()
+  assert.deepEqual(scopes, [[2], [2]])
+})
+
+test('selected request never silently attaches to an existing project-wide run', async (t) => {
+  const { ProjectAnalysisStore } = await modules(t)
+  const store = new ProjectAnalysisStore({
+    get: async () => projectFixture({ analysisRunId: 8, status: 'RUNNING' }),
+    start: () => assert.fail('cannot change an in-flight run'),
+  })
+  store.queue(7, [2])
+  await store.consume(7)
+  assert.equal(store.get(7).phase, 'rejected')
+  assert.equal(store.get(7).waitingForOtherRun, true)
+})
+
+test('selected endpoint sends internal IDs and never falls back to full analysis on old-server 404', async (t) => {
+  const { exchangeLoginCode, startProjectAnalysis, AnalysisRequestRejected } =
+    await modules(t)
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url.endsWith('/auth/token'))
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    requests.push({ url, body: init.body })
+    return Response.json({}, { status: 404 })
+  })
+  await exchangeLoginCode('fixture')
+  await assert.rejects(
+    startProjectAnalysis(7, undefined, [2]),
+    AnalysisRequestRejected,
+  )
+  assert.equal(requests.length, 1)
+  assert.ok(requests[0].url.endsWith('/projects/7/analyses/selected'))
+  assert.deepEqual(JSON.parse(requests[0].body), { repositoryIds: [2] })
+  await assert.rejects(
+    startProjectAnalysis(7, undefined, []),
+    AnalysisRequestRejected,
+  )
+  assert.equal(requests.length, 1)
+})
+
+test('repository status restoration keeps the previous backend result during a frontend-only run', async (t) => {
+  const { exchangeLoginCode, getRepositoryAnalysisStatuses } = await modules(t)
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url.endsWith('/auth/token'))
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    assert.ok(url.endsWith('/projects/7/analyses/repositories'))
+    return Response.json({
+      data: [
+        {
+          repositoryId: 1,
+          analysisRunId: 8,
+          status: 'COMPLETED',
+          incompleteReasons: [],
+        },
+        {
+          repositoryId: 2,
+          analysisRunId: 9,
+          status: 'COLLECTING',
+          incompleteReasons: [],
+        },
+      ],
+    })
+  })
+  await exchangeLoginCode('fixture')
+  const states = await getRepositoryAnalysisStatuses(7)
+  assert.equal(states[0].status, 'COMPLETED')
+  assert.equal(states[1].status, 'COLLECTING')
+})
+
+test('failed PR retry is deduplicated across drawer lifetimes and never recollects repositories', async (t) => {
+  const { PrRetryStore } = await modules(t)
+  const waiting = deferred()
+  let posts = 0
+  const store = new PrRetryStore(async (id, repositoryId) => {
+    assert.equal(id, 7)
+    assert.equal(repositoryId, 2)
+    posts++
+    await waiting.promise
+    return { requeuedCount: 1 }
+  })
+  const pending = store.request(7, 2)
+  const unsubscribe = store.subscribe(() => {})
+  unsubscribe()
+  await store.request(7, 2)
+  assert.equal(posts, 1)
+  waiting.resolve()
+  await pending
+  assert.equal(store.get(7).phase, 'success')
+  store.allowAfterStatus(7, 1)
+  assert.equal(store.get(7).phase, 'success')
+  store.allowAfterStatus(7, 0)
+  assert.equal(store.get(7).phase, 'idle')
+})
+
+test('uncertain PR retry cannot be resent even after status checks', async (t) => {
+  const { PrRetryStore } = await modules(t)
+  let posts = 0
+  const store = new PrRetryStore(async () => {
+    posts++
+    throw new Error('timeout')
+  })
+  await store.request(7)
+  store.allowAfterStatus(7, 0)
+  await store.request(7)
+  assert.equal(posts, 1)
+  assert.equal(store.get(7).phase, 'unknown')
+})
+
+test('PR detail and failed-only retry use their dedicated endpoints', async (t) => {
+  const {
+    exchangeLoginCode,
+    getPullRequestDetail,
+    retryFailedPrs,
+    PrRetryRejected,
+  } = await modules(t)
+  let reject = false
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const u = new URL(url)
+    if (u.pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    if (u.pathname === '/pull-requests/99')
+      return Response.json({
+        data: {
+          id: 99,
+          number: 11,
+          title: 'UI',
+          body: null,
+          state: 'MERGED',
+          baseRef: 'main',
+          createdAtGithub: null,
+          mergedAt: null,
+          htmlUrl: 'https://github.com/org/repo/pull/11',
+          author: null,
+          repository: { id: 2, fullName: 'org/repo' },
+          files: [{ path: 'app.ts', patchOmitted: true }],
+          filesTruncated: true,
+          analysis: {
+            status: 'COMPLETED',
+            summary: '요약',
+            changeType: 'FEATURE',
+            analyzedAt: null,
+            errorCode: null,
+          },
+          incompleteReasons: ['PATCH_OMITTED'],
+        },
+      })
+    assert.equal(u.pathname, '/projects/7/pull-request-analyses/retry')
+    assert.equal(u.searchParams.get('repositoryId'), '2')
+    assert.equal(init.method, 'POST')
+    return reject
+      ? Response.json({}, { status: 400 })
+      : Response.json({ data: { requeuedCount: 1 } }, { status: 202 })
+  })
+  await exchangeLoginCode('fixture')
+  const detail = await getPullRequestDetail(99)
+  assert.equal(detail.analysis.summary, '요약')
+  assert.equal(detail.filesTruncated, true)
+  assert.equal((await retryFailedPrs(7, 2)).requeuedCount, 1)
+  reject = true
+  await assert.rejects(retryFailedPrs(7, 2), PrRetryRejected)
 })

@@ -99,12 +99,46 @@ PDF registration reuses the server-confirmed current agreement for subsequent pr
 
 ## Project home and analysis handoff
 
-The reference HTML's sidebar, current-state banner, summary metrics and repository rows form the project home. Only available project data is shown; PR summary counts, CI and feature matches are not invented. Creation still completes specification registration/skipping and repository linking before entering this home.
+The reference HTML's sidebar, current-state banner, summary metrics and repository rows form the project home. PR summary counts and repository collection states use existing backend endpoints. CI, repository language and feature matches are not invented. Creation still completes specification registration/skipping and repository linking before entering this home.
 
-Verified against the adjacent backend controllers/DTOs: `GET /projects/{id}` exposes `lastAnalysis` (run id/status), and `GET /analyses/{analysisRunId}` exposes per-repository results. This home uses the first endpoint, every five seconds while mounted; it does not invent an analysis-list endpoint. The latter is available for future detailed results.
+Verified against the adjacent backend controllers/DTOs: `GET /projects/{id}` exposes `lastAnalysis` (run id/status), and `GET /analyses/{analysisRunId}` exposes per-repository results. This home uses the first endpoint, every five seconds while mounted; it does not invent an analysis-list endpoint. Repository collection states and incomplete-reason notices use the latter endpoint.
 
 `analysis/projectAnalysis.ts` owns in-memory intents and submitted requests across route changes and StrictMode remounts. Linking queues an intent synchronously, then navigates. The home consumes it once, checks the latest server state before POST, and distinguishes local requesting, confirmed queued/running, refusal, and uncertain acceptance. The list's manual analysis action also hands off to this owner. A fresh page load has no intent and only reads state.
 
 A clear refusal offers a manual retry. Network/timeout/5xx, HTTP 408/425 and conflicts (409, which can mean an existing run) reconcile through GET only. A missing run is not proof that a timed-out POST was rejected; no automatic or manual resend is offered while that attempt remains uncertain. Old terminal run ids cannot confirm a new request. An unreadable status response stays a read error. A consent refusal is displayed inline with guidance to explicitly review consent through the list; no modal opens automatically after linking.
 
 Tests in `tests/analysisFlow.test.mjs` cover slow responses, duplicate intent consumption, route subscription disposal, manual retry, uncertain outcomes, stale completed runs, GET deduplication and reload restoration. Browser checks additionally exercise the real StrictMode routes with mocked APIs at desktop/mobile widths.
+
+## Overview API coverage
+
+Confirmed against both local backend source and running `/v3/api-docs` on 2026-09-29:
+
+- `GET /projects/{id}`: repository visibility, default branch, access status, last sync, latest analysis, spec filename and extraction state.
+- `GET /projects/{id}/pull-requests/summary`: project/repository PR totals and failed counts. It has no per-repository completed count.
+- `GET /projects/{id}/pull-requests?analysisStatus=COMPLETED&size=1[&repositoryId=…]`: `totalElements` supplies exact completed counts; do not subtract failed counts from totals. Requests are batched at most four repositories at a time. Overview data refreshes 15 seconds after each fetch finishes; failures stay unknown rather than showing zero.
+- `GET /analyses/{id}`: individual collection states and incomplete reasons. Collection completion is distinct from PR summary completion.
+- `?tab=prs`: paginated PR list with repository/status filters and safe GitHub source links.
+- `?tab=spec`: initial PDF registration on the existing project with the same explicit consent flow; no project recreation or forced repository onboarding. A registered spec shows its extraction status. Replacement and feature-review editing are outside this screen.
+- Repository addition reuses the connection flow. A per-row confirmation calls `DELETE /projects/{id}/repositories/{repositoryId}` with the internal repository id, then refreshes data. Active/uncertain analysis disables removal.
+
+Feature–PR matching, CI, sharing and a project description are not currently provided by the relevant backend APIs. The connected-repository response does not contain language (the GitHub selection API does, but querying every installation merely to decorate the overview is avoided). The screenshot's unsupported fields are omitted or explicitly marked as pending. The overview's “확인 필요” count is specifically failed PR summaries, not a fabricated combined review score. Header logo navigation remains shared; removed header context/actions stay removed.
+
+## Scoped collection when adding repositories
+
+Repository linking now hands its returned **internal** `repositoryId` values to the analysis intent. It calls `POST /projects/{id}/analyses/selected` with `{ repositoryIds: [...] }`; explicit project-wide refresh continues to use the original POST `/projects/{id}/analyses`. The separate route fails closed on older servers (404), never silently falling back to full collection. Manual retries retain the original scope. If a different run is already active, scoped submission remains retryable after it finishes instead of being falsely reported as accepted.
+
+The companion backend change validates every selected repository against the current project's linked repositories, deduplicates IDs, and checks GitHub access only for that subset. Empty, invalid or foreign IDs never widen the scope. `GET /projects/{id}/analyses/repositories` returns each connected repository's own latest target status, so old completed repositories retain their state while a new repository runs, including after a reload. The latest project run alone no longer supplies all repository row badges.
+
+These endpoints require the updated backend to be running. The backend changes are on its `feature/#11` branch and require no database migration.
+
+## PR list and right-side panels
+
+PR failures take priority over the missing-spec prompt on the overview. The failure count links to `?tab=prs&status=FAILED`; repository rows retain their collection state but show an additional PR-failure warning when required.
+
+The PR list groups only the current page by repository (page totals are not mislabeled as repository totals). Repository/status filters, exact GitHub author login, number/title search and server-supported sort values use the existing paginated endpoint. Filters live in the URL. `panel=analysis` opens analysis management; `pr=<internal PR id>` opens the detail drawer. Native dialog behavior traps focus, supports Escape and returns focus to the trigger; only one panel is opened by UI actions.
+
+Analysis management uses `POST /projects/{id}/pull-request-analyses/retry` to retry failed summaries, without recollecting repositories or regenerating successful summaries. A module-owned request state prevents concurrent dispatch through remounts. Unknown outcomes never replay; status checks are GET only. An accepted retry can be requested again only after an explicit status check confirms no summaries remain pending. Full collection remains a separate explicit action using the existing analysis owner.
+
+PR detail calls `GET /pull-requests/{id}` and checks membership in the current project's repositories. It separates GitHub metadata/files from AI summary/change type/time, shows failed/pending/missing results and truncation notices, escapes remote content, and restricts source links to HTTPS GitHub URLs.
+
+Collection criteria remain read-only (MERGED/default branch/all time). Open/Closed collection, configurable periods, PR exclusions and feature matching are not supported by the current backend and are not presented as working controls. No new backend changes are needed for these panels.

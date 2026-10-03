@@ -2,18 +2,30 @@ import { authenticatedFetch } from '../auth/session.ts'
 import { ConsentRequired } from './consentApi.ts'
 import { projectPaths, readData } from './api.ts'
 
+export interface LinkedRepository {
+  repositoryId: number
+  fullName: string
+  private?: boolean
+  defaultBranch?: string | null
+  accessStatus?: string
+  lastSyncedAt?: string | null
+}
 export interface ProjectDetail {
   id: number
   name: string
   status: string
   onboardingStep: string
-  repositories: { repositoryId: number; fullName: string }[]
+  repositories: LinkedRepository[]
   lastAnalysis?: {
     analysisRunId: number
     status: string
     requestedAt?: string
   } | null
-  specDocument: { fileName: string } | null
+  specDocument: {
+    fileName: string
+    specDocumentId?: number
+    extractionStatus?: string
+  } | null
 }
 
 function isLastAnalysis(value: unknown): boolean {
@@ -21,7 +33,9 @@ function isLastAnalysis(value: unknown): boolean {
   if (typeof value !== 'object') return false
   const run = value as Record<string, unknown>
   return (
-    Number.isSafeInteger(run.analysisRunId) && typeof run.status === 'string'
+    Number.isSafeInteger(run.analysisRunId) &&
+    typeof run.status === 'string' &&
+    (run.requestedAt == null || typeof run.requestedAt === 'string')
   )
 }
 
@@ -40,14 +54,29 @@ function isProjectDetail(value: unknown): value is ProjectDetail {
       const repository = repo as Record<string, unknown>
       return (
         typeof repository.repositoryId === 'number' &&
-        typeof repository.fullName === 'string'
+        typeof repository.fullName === 'string' &&
+        (repository.private === undefined ||
+          typeof repository.private === 'boolean') &&
+        ['defaultBranch', 'lastSyncedAt', 'accessStatus'].every(
+          (key) =>
+            repository[key] == null || typeof repository[key] === 'string',
+        )
       )
     }) &&
     (project.specDocument === null ||
       (typeof project.specDocument === 'object' &&
         project.specDocument !== null &&
         typeof (project.specDocument as Record<string, unknown>).fileName ===
-          'string'))
+          'string' &&
+        ((project.specDocument as Record<string, unknown>).extractionStatus ===
+          undefined ||
+          typeof (project.specDocument as Record<string, unknown>)
+            .extractionStatus === 'string') &&
+        ((project.specDocument as Record<string, unknown>).specDocumentId ===
+          undefined ||
+          Number.isSafeInteger(
+            (project.specDocument as Record<string, unknown>).specDocumentId,
+          ))))
   )
 }
 
@@ -112,11 +141,28 @@ export class AnalysisRequestRejected extends Error {
 export async function startProjectAnalysis(
   projectId: number,
   signal?: AbortSignal,
+  repositoryIds?: number[],
 ) {
-  const response = await authenticatedFetch(projectPaths.analyses(projectId), {
-    method: 'POST',
-    signal,
-  })
+  if (
+    repositoryIds &&
+    (repositoryIds.length === 0 ||
+      repositoryIds.some((id) => !Number.isSafeInteger(id) || id <= 0))
+  )
+    throw new AnalysisRequestRejected()
+  // A separate endpoint fails closed against older servers; never fall back to all.
+  const response = await authenticatedFetch(
+    projectPaths.analyses(projectId) + (repositoryIds ? '/selected' : ''),
+    {
+      method: 'POST',
+      ...(repositoryIds
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repositoryIds }),
+          }
+        : {}),
+      signal,
+    },
+  )
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     if (response.status === 403 && body?.code === 'CONSENT-001')

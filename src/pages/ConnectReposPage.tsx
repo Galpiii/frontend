@@ -129,7 +129,7 @@ function failureMessage(reason: string) {
 
 function isConnectedList(
   value: unknown,
-): value is { githubRepositoryId: number }[] {
+): value is { githubRepositoryId: number; repositoryId: number }[] {
   return (
     Array.isArray(value) &&
     value.every(
@@ -137,7 +137,9 @@ function isConnectedList(
         typeof item === 'object' &&
         item !== null &&
         typeof (item as Record<string, unknown>).githubRepositoryId ===
-          'number',
+          'number' &&
+        Number.isSafeInteger((item as Record<string, unknown>).repositoryId) &&
+        Number((item as Record<string, unknown>).repositoryId) > 0,
     )
   )
 }
@@ -381,7 +383,12 @@ export function ConnectReposPage() {
       )
         throw new Error('연결 결과를 확인할 수 없습니다. 다시 시도해주세요.')
 
-      projectAnalysis.queue(id)
+      projectAnalysis.queue(
+        id,
+        connected
+          .filter((repo) => selected.includes(repo.githubRepositoryId))
+          .map((repo) => repo.repositoryId),
+      )
       navigate(`/project/${id}`, { replace: true })
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return

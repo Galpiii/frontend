@@ -4,6 +4,7 @@ import {
   startProjectAnalysis,
   type ProjectDetail,
 } from '../lib/projectApi.ts'
+import { getRunDetail } from '../lib/projectOverviewApi.ts'
 import { ConsentRequired } from '../lib/consentApi.ts'
 
 type Phase =
@@ -16,9 +17,14 @@ export interface ProjectAnalysisState {
   consentRequired?: boolean
   awaitingRun?: boolean
   preflightFailed?: boolean
+  waitingForOtherRun?: boolean
 }
 const empty: ProjectAnalysisState = { phase: 'idle' }
-const defaultApi = { get: getProjectDetail, start: startProjectAnalysis }
+const defaultApi = {
+  get: getProjectDetail,
+  start: startProjectAnalysis,
+  getRun: getRunDetail,
+}
 
 /** In-memory intent, never router/storage state: a reload can only read the server.
  * The owner outlives React mounts. Only explicit queue/retry actions permit POST.
@@ -27,6 +33,7 @@ export class ProjectAnalysisStore {
   private states = new Map<number, ProjectAnalysisState>()
   private listeners = new Set<() => void>()
   private reads = new Map<number, Promise<void>>()
+  private scopes = new Map<number, number[] | undefined>()
   private revisions = new Map<number, number>()
   private baselines = new Map<number, number | null>()
   private api: typeof defaultApi
@@ -44,13 +51,15 @@ export class ProjectAnalysisStore {
     this.states.set(id, { ...this.get(id), ...patch })
     this.listeners.forEach((listener) => listener())
   }
-  queue(id: number) {
+  queue(id: number, repositoryIds?: number[]) {
     const state = this.get(id)
     if (['queued', 'requesting', 'unknown'].includes(state.phase)) return
+    this.scopes.set(id, repositoryIds ? [...new Set(repositoryIds)] : undefined)
     this.revisions.set(id, (this.revisions.get(id) ?? 0) + 1)
     this.update(id, {
       phase: 'queued',
       preflightFailed: false,
+      waitingForOtherRun: false,
       error: undefined,
       consentRequired: false,
       excluded: undefined,
@@ -59,7 +68,7 @@ export class ProjectAnalysisStore {
   }
   retry(id: number) {
     if (this.get(id).phase !== 'rejected') return
-    this.queue(id)
+    this.queue(id, this.scopes.get(id))
     void this.consume(id)
   }
   async consume(id: number) {
@@ -72,11 +81,16 @@ export class ProjectAnalysisStore {
       this.update(id, { project })
       this.baselines.set(id, project.lastAnalysis?.analysisRunId ?? null)
       if (['QUEUED', 'RUNNING'].includes(project.lastAnalysis?.status ?? '')) {
-        this.update(id, { phase: 'confirmed' })
+        this.update(
+          id,
+          this.scopes.get(id)
+            ? { phase: 'rejected', waitingForOtherRun: true }
+            : { phase: 'confirmed' },
+        )
         return
       }
       dispatched = true
-      const run = await this.api.start(id)
+      const run = await this.api.start(id, undefined, this.scopes.get(id))
       this.update(id, {
         phase: 'confirmed',
         awaitingRun: true,
@@ -111,11 +125,18 @@ export class ProjectAnalysisStore {
       if (revision !== this.revisions.get(id)) return
       const current = this.get(id)
       const latest = project.lastAnalysis
-      const discovered =
-        latest &&
-        (['QUEUED', 'RUNNING'].includes(latest.status) ||
-          (this.baselines.has(id) &&
-            latest.analysisRunId !== this.baselines.get(id)))
+      let discovered =
+        !!latest &&
+        this.baselines.has(id) &&
+        latest.analysisRunId !== this.baselines.get(id)
+      const scope = this.scopes.get(id)
+      if (current.phase === 'unknown' && discovered && scope && latest) {
+        const run = await this.api.getRun(latest.analysisRunId)
+        if (revision !== this.revisions.get(id)) return
+        discovered = scope.every((repositoryId) =>
+          run.repositories.some((repo) => repo.repositoryId === repositoryId),
+        )
+      }
       this.update(id, {
         project,
         error: undefined,
