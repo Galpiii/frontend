@@ -1,12 +1,15 @@
 import {
+  useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type DragEvent,
   type ReactNode,
   type RefObject,
 } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useAnalysisStart } from '../analysis/useAnalysisStart'
+import { featureSpecUpload } from '../analysis/featureSpecUpload'
 import { projectAnalysis } from '../analysis/projectAnalysis'
 import { AiConsentModal } from '../components/AiConsentModal'
 import {
@@ -16,18 +19,16 @@ import {
   Card,
   EmptyState,
   FilterChip,
+  Modal,
   Stepper,
   type Tone,
 } from '../components/ui'
 import {
-  FeatureSpecUploadRejected,
-  FeatureSpecUploadUnknown,
   getFeatureSpecStage,
-  uploadFeatureSpec,
   validateFeatureSpecFile,
   type FeatureSpecStage,
 } from '../lib/featureSpecApi'
-import { getProjectDetail, type ProjectDetail } from '../lib/projectApi'
+import { type ProjectDetail } from '../lib/projectApi'
 
 const extractionLabel: Record<string, string> = {
   PENDING: '기능 추출 대기',
@@ -101,15 +102,12 @@ interface UploadPanelProps {
   busy: boolean
   uncertain: boolean
   dragging: boolean
-  repositoryCount: number
-  message: string
-  messageTone: Tone
   inputRef: RefObject<HTMLInputElement | null>
   onFile: (file?: File) => void
   onUpload: () => void
-  onCheckStatus: () => void
   onDragging: (value: boolean) => void
   compact?: boolean
+  replacing: boolean
 }
 
 function UploadPanel({
@@ -117,15 +115,12 @@ function UploadPanel({
   busy,
   uncertain,
   dragging,
-  repositoryCount,
-  message,
-  messageTone,
   inputRef,
   onFile,
   onUpload,
-  onCheckStatus,
   onDragging,
   compact = false,
+  replacing,
 }: UploadPanelProps) {
   const drop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -146,12 +141,6 @@ function UploadPanel({
           </p>
         </>
       )}
-      <Alert tone="info">
-        이 기능명세서는 프로젝트에 연결된 모든 저장소
-        {repositoryCount > 0 ? ` ${repositoryCount}개` : ''}에 공통으로
-        적용됩니다. 여러 저장소에 나뉜 작업도 하나의 기능 항목에서 함께 확인할
-        수 있습니다.
-      </Alert>
       <div
         onDragEnter={(event) => {
           event.preventDefault()
@@ -219,20 +208,14 @@ function UploadPanel({
           </Button>
         </Card>
       )}
-      {message && <Alert tone={messageTone}>{message}</Alert>}
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={!file || uncertain}
           loading={busy && !uncertain}
           onClick={onUpload}
         >
-          업로드하고 분석하기
+          {replacing ? '교체' : '업로드하고 분석하기'}
         </Button>
-        {uncertain && (
-          <Button variant="secondary" loading={busy} onClick={onCheckStatus}>
-            서버 상태 확인
-          </Button>
-        )}
       </div>
       {!compact && (
         <div className="space-y-1 text-[13px] leading-relaxed text-muted">
@@ -295,7 +278,15 @@ function UnknownStatusPanel({
   )
 }
 
-function ReadyPanel({ project }: { project: ProjectDetail }) {
+function ReadyPanel({
+  project,
+  onReplace,
+  disabled,
+}: {
+  project: ProjectDetail
+  onReplace: () => void
+  disabled: boolean
+}) {
   return (
     <div className="flex max-w-[760px] flex-col gap-4">
       <Card>
@@ -318,17 +309,13 @@ function ReadyPanel({ project }: { project: ProjectDetail }) {
           <Button
             variant="secondary"
             size="sm"
-            disabled
-            title="기능명세서 교체 기능은 준비 중입니다."
+            disabled={disabled}
+            onClick={onReplace}
           >
-            기능명세서 교체 · 준비 중
+            기능명세서 교체
           </Button>
         </div>
       </Card>
-      <Alert tone="info">
-        기능 목록 조회와 검토 기능이 제공되면 이 문서에서 추출한 항목을 이
-        화면에서 확인할 수 있습니다.
-      </Alert>
     </div>
   )
 }
@@ -419,17 +406,26 @@ function MatchResults({
 
 export function ProjectSpecification({ project }: { project: ProjectDetail }) {
   const consent = useAnalysisStart()
-  const lock = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const [file, setFile] = useState<File | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [confirmedId, setConfirmedId] = useState<number>()
+  const request = useSyncExternalStore(featureSpecUpload.subscribe, () =>
+    featureSpecUpload.get(project.id),
+  )
+  const busy = request.phase === 'requesting'
+  const uncertain = request.phase === 'accepted' || request.phase === 'unknown'
   const [dragging, setDragging] = useState(false)
   const [message, setMessage] = useState('')
   const [messageTone, setMessageTone] = useState<Tone>('danger')
-  const [uncertain, setUncertain] = useState(false)
   const stage = getFeatureSpecStage(project.specDocument)
   const view = searchParams.get('view') === 'results' ? 'results' : 'spec'
+
+  useEffect(() => {
+    featureSpecUpload.observe(project.id, project)
+  }, [project, project.id])
 
   const setView = (nextView: 'spec' | 'results') => {
     const next = new URLSearchParams(searchParams)
@@ -439,6 +435,7 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
   }
 
   const chooseFile = (next?: File) => {
+    if (busy || uncertain) return
     setDragging(false)
     if (!next) {
       setFile(null)
@@ -460,71 +457,39 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
     setMessageTone('danger')
   }
 
-  async function upload() {
-    if (!file || lock.current || uncertain) return
-    lock.current = true
-    setBusy(true)
-    setMessage('')
-    try {
-      if (
-        !(await consent.flow.requestConsent('feature-spec')) ||
-        consent.flow.disposed
-      )
-        return
-      await uploadFeatureSpec(project.id, file)
-      setUncertain(true)
-      setFile(null)
-      if (inputRef.current) inputRef.current.value = ''
-      setMessageTone('info')
-      setMessage(
-        '등록 요청을 접수했습니다. 서버에서 문서를 확인할 때까지 다시 전송하지 않습니다.',
-      )
-      await projectAnalysis.refresh(project.id)
-    } catch (cause) {
-      if (consent.flow.disposed) return
-      if (cause instanceof FeatureSpecUploadUnknown) {
-        setUncertain(true)
-        setMessageTone('warning')
-      } else {
-        setMessageTone('danger')
-      }
-      setMessage(
-        cause instanceof FeatureSpecUploadRejected ||
-          cause instanceof FeatureSpecUploadUnknown
-          ? cause.message
-          : '기능명세서를 등록하지 못했습니다.',
-      )
-    } finally {
-      lock.current = false
-      if (!consent.flow.disposed) setBusy(false)
-    }
-  }
+  const replacing = project.specDocument !== null
+  const previousId = project.specDocument?.specDocumentId
+  const canReplace =
+    Number.isSafeInteger(previousId) &&
+    (stage === 'ready' || stage === 'failed')
 
-  async function checkServerStatus() {
-    if (busy) return
-    setBusy(true)
+  async function upload() {
+    if (
+      !file ||
+      busy ||
+      uncertain ||
+      (replacing && (!canReplace || confirmedId !== previousId))
+    )
+      return
+    setConfirming(false)
     setMessage('')
-    try {
-      const current = await getProjectDetail(project.id)
-      if (current.specDocument) {
-        setMessageTone('success')
-        setMessage('서버에서 등록된 기능명세서를 확인했습니다.')
-      } else {
-        setUncertain(false)
-        setMessageTone('info')
-        setMessage(
-          '서버에 등록된 기능명세서가 없습니다. 같은 파일을 다시 등록할 수 있습니다.',
-        )
-      }
-      await projectAnalysis.refresh(project.id)
-    } catch {
-      setMessageTone('warning')
-      setMessage(
-        '서버 상태를 확인하지 못했습니다. 자동으로 다시 전송하지 않습니다.',
-      )
-    } finally {
-      setBusy(false)
+    await featureSpecUpload.request(
+      project.id,
+      file,
+      previousId,
+      async () =>
+        (await consent.flow.requestConsent('feature-spec')) &&
+        !consent.flow.disposed,
+      () => !consent.flow.disposed,
+    )
+    if (consent.flow.disposed) return
+    const phase = featureSpecUpload.get(project.id).phase
+    if (phase === 'accepted' || phase === 'unknown') {
+      setFile(null)
+      setEditing(false)
+      if (inputRef.current) inputRef.current.value = ''
     }
+    await projectAnalysis.refresh(project.id)
   }
 
   const uploader = (
@@ -533,15 +498,17 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
       busy={busy}
       uncertain={uncertain}
       dragging={dragging}
-      repositoryCount={project.repositories.length}
-      message={message}
-      messageTone={messageTone}
       inputRef={inputRef}
       onFile={chooseFile}
-      onUpload={() => void upload()}
-      onCheckStatus={() => void checkServerStatus()}
+      onUpload={() => {
+        if (replacing) {
+          setConfirmedId(previousId)
+          setConfirming(true)
+        } else void upload()
+      }}
       onDragging={setDragging}
-      compact={stage === 'failed'}
+      compact={replacing}
+      replacing={replacing}
     />
   )
 
@@ -549,6 +516,21 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
     <section className="flex flex-col gap-4">
       <SpecHeader stage={stage} />
       <ViewSelector value={view} onChange={setView} />
+      {(message || request.message) && (
+        <Alert
+          tone={
+            message
+              ? messageTone
+              : request.phase === 'rejected'
+                ? 'danger'
+                : request.phase === 'unknown'
+                  ? 'warning'
+                  : 'info'
+          }
+        >
+          {message || request.message}
+        </Alert>
+      )}
       {view === 'results' ? (
         <MatchResults
           project={project}
@@ -560,15 +542,79 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
       ) : stage === 'extracting' ? (
         <ExtractingPanel project={project} />
       ) : stage === 'failed' ? (
-        <FailedPanel project={project} upload={uploader} />
+        <FailedPanel
+          project={project}
+          upload={
+            canReplace ? (
+              uploader
+            ) : (
+              <Alert tone="warning">
+                문서 식별 정보를 확인할 수 없어 교체할 수 없습니다.
+              </Alert>
+            )
+          }
+        />
       ) : stage === 'ready' ? (
-        <ReadyPanel project={project} />
+        <>
+          <ReadyPanel
+            project={project}
+            disabled={!canReplace || busy || uncertain}
+            onReplace={() => setEditing(true)}
+          />
+          {editing && uploader}
+        </>
       ) : (
         <UnknownStatusPanel
           project={project}
           onRefresh={() => void projectAnalysis.refresh(project.id)}
         />
       )}
+      <Modal
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        title="기능명세서를 교체할까요?"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirming(false)}>
+              취소
+            </Button>
+            <Button
+              disabled={
+                busy || uncertain || !canReplace || confirmedId !== previousId
+              }
+              onClick={() => void upload()}
+            >
+              기존 결과를 삭제하고 교체
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          {confirmedId !== previousId && (
+            <Alert tone="warning">
+              문서가 변경되었습니다. 취소 후 최신 문서를 확인해주세요.
+            </Alert>
+          )}
+          <div className="overflow-hidden rounded-[10px] border border-line bg-subtle">
+            <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-3 border-b border-line px-4 py-3 text-[13px]">
+              <span className="font-bold text-faint">현재</span>
+              <span className="min-w-0 break-all font-medium text-body">
+                {project.specDocument?.fileName}
+              </span>
+            </div>
+            <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-3 px-4 py-3 text-[13px]">
+              <span className="font-bold text-primary">교체 후</span>
+              <span className="min-w-0 break-all font-bold text-ink">
+                {file?.name}
+              </span>
+            </div>
+          </div>
+          <Alert tone="warning">
+            기존 추출 결과와 검토 기록(병합·분리·확인)이 모두 삭제되며 되돌릴 수
+            없습니다. 새 PDF로 기능을 다시 추출합니다.
+          </Alert>
+        </div>
+      </Modal>
       <AiConsentModal flow={consent.flow} state={consent.state} />
     </section>
   )
