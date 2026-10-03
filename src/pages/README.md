@@ -118,7 +118,9 @@ Confirmed against both local backend source and running `/v3/api-docs` on 2026-0
 - `GET /projects/{id}/pull-requests?analysisStatus=COMPLETED&size=1[&repositoryId=…]`: `totalElements` supplies exact completed counts; do not subtract failed counts from totals. Requests are batched at most four repositories at a time. Overview data refreshes 15 seconds after each fetch finishes; failures stay unknown rather than showing zero.
 - `GET /analyses/{id}`: individual collection states and incomplete reasons. Collection completion is distinct from PR summary completion.
 - `?tab=prs`: paginated PR list with repository/status filters and safe GitHub source links.
-- `?tab=spec`: initial PDF registration on the existing project with the same explicit consent flow; no project recreation or forced repository onboarding. A registered spec shows its extraction status. Replacement and feature-review editing are outside this screen.
+- `?tab=match`: 기능대조 진입점. 기존 `?tab=spec` 링크도 같은 화면으로 복원한다. 기존 프로젝트에서 명세서 PDF를 등록할 때 동일한 명시적 동의 흐름을 사용하며, 프로젝트 재생성이나 저장소 온보딩으로 돌아가지 않는다. 미등록, 추출 대기/진행, 실패, 완료, 알 수 없는 서버 상태를 구분한다.
+- 기능명세서 업로드의 네트워크 오류, 408/425, 5xx는 접수 여부가 불확실한 상태로 처리한다. 자동 재전송하지 않고 `GET /projects/{id}`로 등록 여부를 확인한 뒤에만 다시 업로드할 수 있다.
+- 기능별 대조 결과 보기는 현재 제공 범위를 명확히 안내하고 PR 목록으로 연결한다. 기능 목록 조회·검토, 명세서 교체와 실제 기능–PR 대조는 지원 API가 생길 때까지 동작하는 것처럼 표현하지 않는다.
 - Repository addition reuses the connection flow. A per-row confirmation calls `DELETE /projects/{id}/repositories/{repositoryId}` with the internal repository id, then refreshes data. Active/uncertain analysis disables removal.
 
 Feature–PR matching, CI, sharing and a project description are not currently provided by the relevant backend APIs. The connected-repository response does not contain language (the GitHub selection API does, but querying every installation merely to decorate the overview is avoided). The screenshot's unsupported fields are omitted or explicitly marked as pending. The overview's “확인 필요” count is specifically failed PR summaries, not a fabricated combined review score. Header logo navigation remains shared; removed header context/actions stay removed.
