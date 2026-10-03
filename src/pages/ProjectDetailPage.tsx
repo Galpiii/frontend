@@ -26,6 +26,18 @@ export function ProjectDetailPage() {
   return <ProjectHome key={id} projectId={id} />
 }
 
+function specificationFooter(project?: {
+  specDocument: { extractionStatus?: string } | null
+}) {
+  const status = project?.specDocument?.extractionStatus
+  if (!project?.specDocument) return '기능명세서 미등록'
+  if (status === 'COMPLETED') return '기능대조 · 명세서 준비됨'
+  if (status === 'FAILED') return '기능대조 · 추출 실패'
+  if (status === 'PENDING' || status === 'PROCESSING')
+    return '기능대조 · 기능 추출 중'
+  return '기능대조 · 상태 확인 필요'
+}
+
 function ProjectHome({ projectId }: { projectId: number }) {
   const state = useSyncExternalStore(projectAnalysis.subscribe, () =>
     projectAnalysis.get(projectId),
@@ -35,9 +47,13 @@ function ProjectHome({ projectId }: { projectId: number }) {
   const [searchParams] = useSearchParams()
   const requestedTab = searchParams.get('tab')
   const tab =
-    requestedTab === 'prs' || requestedTab === 'spec' ? requestedTab : 'home'
+    requestedTab === 'prs'
+      ? 'prs'
+      : requestedTab === 'match' || requestedTab === 'spec'
+        ? 'match'
+        : 'home'
   const overview = useProjectOverview(projectId, project)
-  const openSpec = () => navigate(`/project/${projectId}?tab=spec`)
+  const openSpec = () => navigate(`/project/${projectId}?tab=match`)
   useDocumentTitle(project?.name ?? '프로젝트')
   useEffect(() => {
     void projectAnalysis.consume(projectId)
@@ -126,9 +142,9 @@ function ProjectHome({ projectId }: { projectId: number }) {
               href: `/project/${projectId}?tab=prs`,
             },
             {
-              id: 'spec',
-              label: '기능명세서',
-              href: `/project/${projectId}?tab=spec`,
+              id: 'match',
+              label: '기능대조',
+              href: `/project/${projectId}?tab=match`,
             },
           ]}
           footer={
@@ -145,7 +161,7 @@ function ProjectHome({ projectId }: { projectId: number }) {
                   {repo.fullName}
                 </p>
               ))}
-              <p>기능대조 · 준비 중</p>
+              <p>{specificationFooter(project)}</p>
             </div>
           }
         />
@@ -158,8 +174,11 @@ function ProjectHome({ projectId }: { projectId: number }) {
             data={overview.data}
             refresh={overview.refresh}
           />
-        ) : tab === 'spec' && project ? (
-          <ProjectSpecification project={project} />
+        ) : tab === 'match' && project ? (
+          <ProjectSpecification
+            key={`${project.specDocument?.specDocumentId ?? 'none'}:${project.specDocument?.extractionStatus ?? 'empty'}`}
+            project={project}
+          />
         ) : (
           <>
             <SectionHeader

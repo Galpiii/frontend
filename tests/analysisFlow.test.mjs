@@ -16,6 +16,7 @@ async function modules(t) {
     'lib/projectApi',
     'lib/projectOverviewApi',
     'lib/pullRequestApi',
+    'lib/featureSpecApi',
     'analysis/prRetry',
     'analysis/analysisFlow',
     'analysis/projectAnalysis',
@@ -46,6 +47,7 @@ async function modules(t) {
     'lib/projectApi',
     'lib/projectOverviewApi',
     'lib/pullRequestApi',
+    'lib/featureSpecApi',
     'analysis/prRetry',
     'auth/session',
   ])
@@ -995,4 +997,87 @@ test('PR detail and failed-only retry use their dedicated endpoints', async (t) 
   assert.equal((await retryFailedPrs(7, 2)).requeuedCount, 1)
   reject = true
   await assert.rejects(retryFailedPrs(7, 2), PrRetryRejected)
+})
+
+test('feature spec states and PDF validation stay frontend-only and deterministic', async (t) => {
+  const {
+    getFeatureSpecStage,
+    validateFeatureSpecFile,
+    FEATURE_SPEC_MAX_BYTES,
+  } = await modules(t)
+
+  assert.equal(getFeatureSpecStage(null), 'empty')
+  assert.equal(
+    getFeatureSpecStage({ extractionStatus: 'PENDING' }),
+    'extracting',
+  )
+  assert.equal(
+    getFeatureSpecStage({ extractionStatus: 'PROCESSING' }),
+    'extracting',
+  )
+  assert.equal(getFeatureSpecStage({ extractionStatus: 'COMPLETED' }), 'ready')
+  assert.equal(getFeatureSpecStage({ extractionStatus: 'FAILED' }), 'failed')
+  assert.equal(
+    getFeatureSpecStage({ extractionStatus: 'NEW_VALUE' }),
+    'unknown',
+  )
+
+  assert.equal(
+    validateFeatureSpecFile({ name: 'requirements.pdf', size: 1024 }),
+    null,
+  )
+  assert.match(
+    validateFeatureSpecFile({ name: 'requirements.txt', size: 1024 }),
+    /PDF/,
+  )
+  assert.match(
+    validateFeatureSpecFile({ name: 'requirements.pdf', size: 0 }),
+    /비어/,
+  )
+  assert.match(
+    validateFeatureSpecFile({
+      name: 'requirements.pdf',
+      size: FEATURE_SPEC_MAX_BYTES + 1,
+    }),
+    /20MB/,
+  )
+})
+
+test('feature spec upload uses the existing endpoint and never hides an uncertain outcome', async (t) => {
+  const {
+    exchangeLoginCode,
+    uploadFeatureSpec,
+    FeatureSpecUploadRejected,
+    FeatureSpecUploadUnknown,
+  } = await modules(t)
+  let outcome = 'accepted'
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const path = new URL(url).pathname
+    if (path === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    requests.push({ path, method: init.method, body: init.body })
+    if (outcome === 'network') throw new TypeError('connection dropped')
+    if (outcome === 'rejected') return new Response(null, { status: 400 })
+    if (outcome === 'unknown') return new Response(null, { status: 500 })
+    return new Response(null, { status: 202 })
+  })
+  await exchangeLoginCode('fixture')
+  const file = new File(['pdf'], 'requirements.pdf', {
+    type: 'application/pdf',
+  })
+
+  await uploadFeatureSpec(7, file)
+  assert.equal(requests[0].path, '/projects/7/feature-specs')
+  assert.equal(requests[0].method, 'POST')
+  assert.ok(requests[0].body instanceof FormData)
+
+  outcome = 'rejected'
+  await assert.rejects(uploadFeatureSpec(7, file), FeatureSpecUploadRejected)
+  outcome = 'unknown'
+  await assert.rejects(uploadFeatureSpec(7, file), FeatureSpecUploadUnknown)
+  outcome = 'network'
+  await assert.rejects(uploadFeatureSpec(7, file), FeatureSpecUploadUnknown)
 })
