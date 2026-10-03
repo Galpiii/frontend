@@ -18,6 +18,7 @@ async function modules(t) {
     'lib/pullRequestApi',
     'lib/featureSpecApi',
     'analysis/prRetry',
+    'analysis/featureSpecUpload',
     'analysis/analysisFlow',
     'analysis/projectAnalysis',
   ]) {
@@ -49,6 +50,7 @@ async function modules(t) {
     'lib/pullRequestApi',
     'lib/featureSpecApi',
     'analysis/prRetry',
+    'analysis/featureSpecUpload',
     'auth/session',
   ])
     result = {
@@ -1080,4 +1082,148 @@ test('feature spec upload uses the existing endpoint and never hides an uncertai
   await assert.rejects(uploadFeatureSpec(7, file), FeatureSpecUploadUnknown)
   outcome = 'network'
   await assert.rejects(uploadFeatureSpec(7, file), FeatureSpecUploadUnknown)
+})
+
+test('replacement uses PUT multipart and never falls back to POST on rejection', async (t) => {
+  const {
+    exchangeLoginCode,
+    replaceFeatureSpec,
+    FeatureSpecUploadRejected,
+    FeatureSpecUploadUnknown,
+  } = await modules(t)
+  let status = 200
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url.endsWith('/auth/token'))
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    calls.push(init)
+    assert.equal(new URL(url).pathname, '/projects/7/feature-specs')
+    return new Response(null, { status })
+  })
+  await exchangeLoginCode('fixture')
+  const file = new File(['pdf'], 'new.pdf', { type: 'application/pdf' })
+  await replaceFeatureSpec(7, file)
+  for (status of [400, 403, 404, 409, 413, 415, 422])
+    await assert.rejects(replaceFeatureSpec(7, file), FeatureSpecUploadRejected)
+  for (status of [408, 425, 500, 503])
+    await assert.rejects(replaceFeatureSpec(7, file), FeatureSpecUploadUnknown)
+  assert.equal(calls.length, 12)
+  assert.ok(
+    calls.every(
+      (call) =>
+        call.method === 'PUT' && call.body.get('file').name === 'new.pdf',
+    ),
+  )
+})
+
+test('spec replacement locks across mounts and verifies a different document ID after acceptance', async (t) => {
+  const { FeatureSpecUploadStore } = await modules(t)
+  const waiting = deferred()
+  let document = {
+    specDocumentId: 9,
+    extractionStatus: 'COMPLETED',
+    fileName: 'old.pdf',
+  }
+  let puts = 0
+  const store = new FeatureSpecUploadStore({
+    get: async () => ({ ...projectFixture(), specDocument: document }),
+    upload: () => assert.fail('replacement must not POST'),
+    replace: async () => {
+      puts++
+      await waiting.promise
+    },
+  })
+  const submit = () => store.request(7, {}, 9, async () => true)
+  const pending = submit()
+  await tick()
+  store.subscribe(() => {})()
+  await submit()
+  assert.equal(puts, 1)
+  waiting.resolve()
+  await pending
+  await store.check(7)
+  await submit()
+  assert.equal(puts, 1)
+  assert.equal(store.get(7).phase, 'accepted')
+  document = { ...document, specDocumentId: 10, extractionStatus: 'PENDING' }
+  await store.check(7)
+  assert.equal(store.get(7).phase, 'idle')
+})
+
+test('uncertain spec request remains blocked after unchanged, missing, or failed reads', async (t) => {
+  const { FeatureSpecUploadStore } = await modules(t)
+  let document = {
+    specDocumentId: 9,
+    extractionStatus: 'FAILED',
+    fileName: 'old.pdf',
+  }
+  let offline = false
+  let puts = 0
+  const store = new FeatureSpecUploadStore({
+    get: async () => {
+      if (offline) throw Error('offline')
+      return { ...projectFixture(), specDocument: document }
+    },
+    upload: () => assert.fail('no fallback'),
+    replace: async () => {
+      puts++
+      throw Error('timeout')
+    },
+  })
+  const submit = () => store.request(7, {}, 9, async () => true)
+  await submit()
+  await store.check(7)
+  document = null
+  await store.check(7)
+  offline = true
+  await assert.rejects(store.check(7))
+  await submit()
+  assert.equal(puts, 1)
+  assert.equal(store.get(7).phase, 'unknown')
+})
+
+test('spec consent cancellation, unmount during preflight and changed document never dispatch', async (t) => {
+  const { FeatureSpecUploadStore } = await modules(t)
+  let document = { specDocumentId: 10, extractionStatus: 'COMPLETED' }
+  const store = new FeatureSpecUploadStore({
+    get: async () => ({ ...projectFixture(), specDocument: document }),
+    upload: () => assert.fail('no POST'),
+    replace: () => assert.fail('no PUT'),
+  })
+  await store.request(7, {}, 9, async () => false)
+  assert.equal(store.get(7).phase, 'idle')
+  await store.request(7, {}, 9, async () => true)
+  assert.equal(store.get(7).phase, 'rejected')
+  document = { specDocumentId: 9, extractionStatus: 'PROCESSING' }
+  await store.request(7, {}, 9, async () => true)
+  assert.equal(store.get(7).phase, 'rejected')
+  await store.request(
+    7,
+    {},
+    9,
+    async () => true,
+    () => false,
+  )
+  assert.equal(store.get(7).phase, 'idle')
+})
+
+test('explicit spec rejection allows only a new manual intent', async (t) => {
+  const { FeatureSpecUploadStore, FeatureSpecUploadRejected } = await modules(t)
+  let posts = 0
+  const store = new FeatureSpecUploadStore({
+    get: async () => ({ ...projectFixture(), specDocument: null }),
+    upload: async () => {
+      if (++posts === 1) throw new FeatureSpecUploadRejected('invalid PDF')
+    },
+    replace: () => assert.fail('no PUT'),
+  })
+  await store.request(7, {}, undefined, async () => true)
+  await store.check(7)
+  assert.equal(posts, 1)
+  assert.equal(store.get(7).phase, 'rejected')
+  await store.request(7, {}, undefined, async () => true)
+  assert.equal(posts, 2)
+  assert.equal(store.get(7).phase, 'accepted')
 })
