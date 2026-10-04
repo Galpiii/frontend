@@ -166,6 +166,44 @@ Verified against the adjacent backend's committed feature-review API on 2026-10-
 
 The review filter is stored as `review=required|unreviewed|reviewed`; omitting it selects all features. Counts come only from the summary endpoint. Feature cards retain the backend's section grouping and display review state, source pages, extracted requirements, source text, issue descriptions, duplicate candidates and split suggestions as React text. The review-required filter opens cards by default; other filters keep long lists compact. Loading uses layout-shaped placeholders, and malformed, rejected and empty responses remain distinct states.
 
-The screen connects individual and bulk confirmation, editing, deletion, duplicate-candidate merge and suggestion-based split to the committed backend endpoints. Editing sends the complete requirement list because the API replaces requirements as a set. Merge and split only use candidates and suggestions returned by the server. One in-memory lock prevents overlapping user requests; uncertain network/408/425/5xx outcomes are never resent automatically and trigger read-only list and summary refreshes.
+The screen connects individual and bulk confirmation, editing, deletion, duplicate-candidate merge and suggestion-based split to the committed backend endpoints. Editing sends the complete requirement list because the API replaces requirements as a set. Merge and split only use candidates and suggestions returned by the server. `analysis/featureReview.ts` owns each document's mutation across SPA navigation and StrictMode remounts. It keeps the lock through both follow-up GETs, and the screen stays disabled until its current list has loaded. Clear rejections are displayed outside the dismissed dialog; editing again uses freshly fetched requirements and suggestions. Review mutations and document replacement are disabled while review reconciliation is pending or has failed.
+
+Network/408/425/5xx outcomes are never replayed. Even a successful GET cannot prove that an uncertain mutation has finished: this API has no operation ID or completion receipt. The owner retains uncertainty, shows the latest list, and offers only explicit GET refreshes. A failed list or summary read also retains the lock; a later successful refresh unlocks only known outcomes. Ownership lasts for the current page lifetime, not across hard reloads, tabs, or devices. A reload reads server state without automatically sending any mutation.
+
+Regression coverage now includes real UI dispatch for bulk confirmation, deletion, merge and split, exact merge/split payloads, dynamic filtered results, 400/404/409 rejection, network/408/425/500/503 uncertainty, rapid duplicate clicks, and SPA remounts during the mutation and reconciliation. Unit tests additionally cover subscription disposal, per-document ownership, partial read failure and GET recovery.
+
+On 2026-10-04 the running backend's `/v3/api-docs` also exposed these contracts. Live mutation integration remains unverified: `/auth/me` returned 401 without an authenticated test session. Use an authenticated disposable test project with completed extraction to verify all mutations and requirement replacement against real data. No backend files were changed.
 
 Document quality, table-of-contents comparison, page-only retry, source-document editing, temporary saves and feature–PR matching are not exposed by the verified API and are not presented as available controls.
+
+## Live feature review integration
+
+`tests/integration/featureReviewLive.mjs` runs against a real backend through the application's Vite-served API modules, including runtime response validation and session refresh. It does not mock endpoints, seed a database, upload a specification, or trigger AI extraction. Start Vite with the intended `VITE_API_BASE_URL` first.
+
+Use a dedicated authenticated Playwright storage-state file and a disposable project with completed extraction. Store sessions under the ignored `.auth/` directory (or outside the repository). The backend rotates refresh cookies: the runner atomically updates the supplied session file with mode 0600, including after assertion failures, and refuses concurrent runs using the same file. Do not reuse a cookie copied from an active browser session. An interrupted process can leave a `.lock` file; remove it only after confirming the process has stopped. Session contents are never printed.
+
+Read-only inspection (apart from required authentication refresh):
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright-core/index.mjs \
+PLAYWRIGHT_STORAGE_STATE=/absolute/path/to/dedicated-session.json \
+REVIEW_PROJECT_ID=<test-project-id> \
+node tests/integration/featureReviewLive.mjs
+```
+
+The output includes the actual document ID, summary, feature IDs, requirement IDs, merge candidates and split suggestion IDs. All three filters are checked against the unfiltered list. `FRONTEND_URL` and `CHROME_PATH` override Vite's address and Chrome's path. The live runner defaults to `http://localhost:5173`; use the same host as the backend (normally `localhost`) so cookie-based refresh is not accidentally made cross-site.
+
+For write verification, create a JSON plan with `projectId`, `specDocumentId` and `actions`, using IDs returned by inspection. Each action uses one of these shapes:
+
+- `confirm`: `kind`, `featureId` (must still be unreviewed).
+- `edit`: `kind`, `featureId`, `name`, `requirements` (the complete array of `{ id?, content }`; omitted existing IDs must disappear).
+- `delete`: `kind`, `featureId`.
+- `merge`: `kind`, `featureId`, `targetFeatureId`, `name` (target must remain a server-provided candidate).
+- `split`: `kind`, `featureId`, `features` (every server suggestion as `{ suggestionId, name }`).
+- `confirm-all`: `kind` only, optionally last; confirms all remaining unreviewed features in the document.
+
+Choose distinct feature IDs for separate actions, including merge targets. The full plan is checked before any write, and the document ID/extraction state and current feature data are checked again before each action. Add `REVIEW_PLAN_PATH=/absolute/path/to/plan.json` and `--apply` to the command to execute it. These actions really change/delete the selected test data and cannot be rolled back by this tool.
+
+After each successful mutation, GET results verify status, replacement requirements, removed originals, and newly created merge/split features. Any mutation error triggers only a GET observation and stops the entire run, without replaying or executing later actions. A failed postcondition also stops. A changed document or concurrent edits can invalidate the run; the backend provides no conditional-write revision token. Do not rerun a partially applied plan without inspecting server state and selecting a fresh plan.
+
+`tests/featureReviewIntegration.test.mjs` checks the runner itself with fixtures, including refusal before writes, replacement verification and uncertainty handling. Passing those tests is not a claim that live mutations have been verified. Live writes still require an authenticated test session and explicitly selected disposable data.
