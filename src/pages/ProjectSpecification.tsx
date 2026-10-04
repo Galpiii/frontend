@@ -12,6 +12,7 @@ import { useAnalysisStart } from '../analysis/useAnalysisStart'
 import { featureSpecUpload } from '../analysis/featureSpecUpload'
 import { projectAnalysis } from '../analysis/projectAnalysis'
 import { AiConsentModal } from '../components/AiConsentModal'
+import { ProjectFeatureReview } from './ProjectFeatureReview'
 import {
   Alert,
   Badge,
@@ -30,18 +31,11 @@ import {
 } from '../lib/featureSpecApi'
 import { type ProjectDetail } from '../lib/projectApi'
 
-const extractionLabel: Record<string, string> = {
-  PENDING: '기능 추출 대기',
-  PROCESSING: '기능 추출 중',
-  COMPLETED: '기능 추출 완료',
-  FAILED: '기능 추출 실패',
-}
-
-function stageStep(stage: FeatureSpecStage) {
+function stageStep(stage: FeatureSpecStage, view: 'spec' | 'results') {
   if (stage === 'empty') return 0
   if (stage === 'extracting' || stage === 'failed' || stage === 'unknown')
     return 1
-  return 2
+  return view === 'results' ? 3 : 2
 }
 
 function formatFileSize(bytes: number) {
@@ -50,7 +44,13 @@ function formatFileSize(bytes: number) {
     : `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-function SpecHeader({ stage }: { stage: FeatureSpecStage }) {
+function SpecHeader({
+  stage,
+  view,
+}: {
+  stage: FeatureSpecStage
+  view: 'spec' | 'results'
+}) {
   return (
     <header className="flex max-w-[1020px] flex-col gap-3">
       <div>
@@ -62,8 +62,8 @@ function SpecHeader({ stage }: { stage: FeatureSpecStage }) {
         </p>
       </div>
       <Stepper
-        steps={['기능명세서 등록', '기능 추출', '기능대조']}
-        current={stageStep(stage)}
+        steps={['기능명세서 등록', '기능 추출', '기능 검토', '기능대조']}
+        current={stageStep(stage, view)}
       />
     </header>
   )
@@ -247,9 +247,6 @@ function ExtractingPanel({ project }: { project: ProjectDetail }) {
           표시됩니다.
         </p>
       </div>
-      <Badge tone="info">
-        {extractionLabel[status] ?? '기능 추출 상태 확인 중'}
-      </Badge>
     </Card>
   )
 }
@@ -391,7 +388,7 @@ function MatchResults({
   return (
     <EmptyState
       title="기능별 대조 결과를 준비하고 있습니다"
-      description="현재는 기능명세서 등록과 추출 상태까지 확인할 수 있습니다. 기능 목록과 PR 대조 결과는 다음 단계에서 제공됩니다."
+      description="기능 목록은 기능명세서 보기에서 검토할 수 있습니다. 기능과 PR의 실제 대조 결과는 관련 API가 제공된 뒤 연결됩니다."
       action={
         <Button
           variant="secondary"
@@ -514,7 +511,7 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
 
   return (
     <section className="flex flex-col gap-4">
-      <SpecHeader stage={stage} />
+      <SpecHeader stage={stage} view={view} />
       <ViewSelector value={view} onChange={setView} />
       {(message || request.message) && (
         <Alert
@@ -556,12 +553,22 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
         />
       ) : stage === 'ready' ? (
         <>
-          <ReadyPanel
-            project={project}
-            disabled={!canReplace || busy || uncertain}
-            onReplace={() => setEditing(true)}
-          />
-          {editing && uploader}
+          {typeof previousId === 'number' ? (
+            <ProjectFeatureReview
+              specDocumentId={previousId}
+              fileName={project.specDocument?.fileName ?? ''}
+              replaceDisabled={busy || uncertain}
+              onReplace={() => setEditing(true)}
+              replacementPanel={editing ? uploader : null}
+            />
+          ) : (
+            <ReadyPanel
+              project={project}
+              disabled
+              onReplace={() => setEditing(true)}
+            />
+          )}
+          {editing && typeof previousId !== 'number' && uploader}
         </>
       ) : (
         <UnknownStatusPanel
