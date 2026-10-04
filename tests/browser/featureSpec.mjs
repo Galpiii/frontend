@@ -9,8 +9,95 @@ let specState = 'completed'
 let documentId = 9
 let outcome = 200
 let mutations = []
+let reviewMutations = []
 let agreed = true
 let consentPosts = 0
+const reviewFeatures = [
+  {
+    featureId: 101,
+    name: '프로젝트 생성',
+    reviewStatus: 'UNREVIEWED',
+    sourcePageStart: 3,
+    sourcePageEnd: 4,
+    requirements: [
+      {
+        requirementId: 1001,
+        content: '사용자는 프로젝트를 생성할 수 있다.',
+        sourceText: '새 프로젝트를 만들고 이름을 입력한다.',
+      },
+    ],
+    issues: [
+      {
+        issueType: 'DUPLICATE_SUSPECTED',
+        description: '프로젝트 등록 기능과 요구사항이 겹칩니다.',
+      },
+      {
+        issueType: 'SPLIT_RECOMMENDED',
+        description: '생성과 초기 설정을 나눌 수 있습니다.',
+      },
+    ],
+    duplicateCandidates: [
+      {
+        targetFeatureId: 102,
+        targetFeatureName: '프로젝트 등록',
+        targetSourcePageStart: 5,
+        targetSourcePageEnd: 5,
+        targetRequirements: [],
+        reason: '같은 프로젝트 생성 흐름을 설명합니다.',
+        suggestedMergedName: '프로젝트 생성',
+        suggestedSection: '프로젝트',
+      },
+    ],
+    splitSuggestions: [
+      {
+        suggestionId: 301,
+        suggestedName: '프로젝트 생성',
+        suggestedSection: '프로젝트',
+        requirements: [
+          {
+            requirementId: 1001,
+            content: '사용자는 프로젝트를 생성할 수 있다.',
+            sourceText: '새 프로젝트를 만들고 이름을 입력한다.',
+          },
+        ],
+      },
+      {
+        suggestionId: 302,
+        suggestedName: '프로젝트 초기 설정',
+        suggestedSection: '프로젝트',
+        requirements: [],
+      },
+    ],
+  },
+  {
+    featureId: 102,
+    name: '프로젝트 등록',
+    reviewStatus: 'UNREVIEWED',
+    sourcePageStart: 5,
+    sourcePageEnd: 5,
+    requirements: [],
+    issues: [],
+    duplicateCandidates: [],
+    splitSuggestions: [],
+  },
+  {
+    featureId: 103,
+    name: '저장소 연결',
+    reviewStatus: 'USER_CONFIRMED',
+    sourcePageStart: 7,
+    sourcePageEnd: 7,
+    requirements: [
+      {
+        requirementId: 1003,
+        content: 'GitHub 저장소를 연결한다.',
+        sourceText: null,
+      },
+    ],
+    issues: [],
+    duplicateCandidates: [],
+    splitSuggestions: [],
+  },
+]
 const project = () => ({
   id: 7,
   name: '갈피 프론트엔드',
@@ -98,6 +185,75 @@ await page.route('http://localhost:8080/**', async (route) => {
   if (url.pathname === '/projects/7/pull-requests')
     return ok({ totalElements: 0, totalPages: 0, pullRequests: [] })
   if (url.pathname === '/projects/7/analyses/repositories') return ok([])
+  if (/^\/feature-specs\/\d+\/review-summary$/.test(url.pathname)) {
+    const reviewRequired = reviewFeatures.filter(
+      (feature) =>
+        feature.reviewStatus === 'UNREVIEWED' && feature.issues.length > 0,
+    ).length
+    const noIssue = reviewFeatures.filter(
+      (feature) =>
+        feature.reviewStatus === 'UNREVIEWED' && feature.issues.length === 0,
+    ).length
+    return ok({
+      reviewRequired,
+      noIssue,
+      reviewed: reviewFeatures.length - reviewRequired - noIssue,
+      total: reviewFeatures.length,
+    })
+  }
+  const confirmMatch = url.pathname.match(
+    /^\/feature-specs\/\d+\/features\/(\d+)\/confirm$/,
+  )
+  if (confirmMatch && route.request().method() === 'POST') {
+    const feature = reviewFeatures.find(
+      (item) => item.featureId === Number(confirmMatch[1]),
+    )
+    reviewMutations.push({ method: 'POST', path: url.pathname })
+    if (feature) {
+      feature.reviewStatus = 'USER_CONFIRMED'
+      feature.issues = []
+      feature.duplicateCandidates = []
+      feature.splitSuggestions = []
+    }
+    return ok({})
+  }
+  const updateMatch = url.pathname.match(
+    /^\/feature-specs\/\d+\/features\/(\d+)$/,
+  )
+  if (updateMatch && route.request().method() === 'PATCH') {
+    const body = route.request().postDataJSON()
+    const feature = reviewFeatures.find(
+      (item) => item.featureId === Number(updateMatch[1]),
+    )
+    reviewMutations.push({ method: 'PATCH', path: url.pathname, body })
+    if (feature) {
+      feature.name = body.name
+      feature.requirements = body.requirements.map((requirement, index) => ({
+        requirementId: requirement.id ?? 2000 + index,
+        content: requirement.content,
+        sourceText: null,
+      }))
+      feature.reviewStatus = 'USER_MODIFIED'
+      feature.issues = []
+      feature.duplicateCandidates = []
+      feature.splitSuggestions = []
+    }
+    return ok({})
+  }
+  if (/^\/feature-specs\/\d+\/features$/.test(url.pathname)) {
+    const filter = url.searchParams.get('filter')
+    const features =
+      filter === 'REVIEW_REQUIRED'
+        ? [reviewFeatures[0]]
+        : filter === 'NO_ISSUE'
+          ? [reviewFeatures[1]]
+          : filter === 'REVIEWED'
+            ? [reviewFeatures[2]]
+            : reviewFeatures
+    return ok({
+      sections: [{ sectionId: 11, title: '프로젝트', features }],
+    })
+  }
   return route.fulfill({ status: 404, body: '{}' })
 })
 
@@ -118,12 +274,52 @@ async function prepareReplacement() {
   await page
     .getByRole('button', { name: '기능명세서 교체', exact: true })
     .click()
+  const uploadBox = await page
+    .getByText('PDF 파일을 끌어다 놓거나', { exact: true })
+    .boundingBox()
+  const filterBox = await page
+    .locator('[aria-label="기능 검토 필터"]')
+    .boundingBox()
+  assert.ok(uploadBox && filterBox && uploadBox.y < filterBox.y)
   await pick()
   await page.getByRole('button', { name: '교체', exact: true }).click()
   await waitText('기존 추출 결과와 검토 기록')
 }
 try {
   await open()
+  await waitText('기능 3개를 추출했습니다')
+  await page.getByRole('button', { name: '확인 필요 1', exact: true }).click()
+  await waitText('프로젝트 등록 기능과 요구사항이 겹칩니다.')
+  assert.ok(page.url().includes('review=required'))
+  await page.getByRole('button', { name: '중복 기능 병합' }).click()
+  await page.getByRole('heading', { name: '중복 기능 병합' }).waitFor()
+  await page.getByRole('button', { name: '취소', exact: true }).click()
+  await page.getByRole('button', { name: '추천안대로 분리' }).click()
+  await page.getByRole('heading', { name: '추천안대로 기능 분리' }).waitFor()
+  assert.equal(await page.getByLabel(/분리 기능/).count(), 2)
+  await page.getByRole('button', { name: '취소', exact: true }).click()
+  await page.getByRole('button', { name: '전체 3', exact: true }).click()
+  assert.equal(page.url().includes('review='), false)
+  await page
+    .getByRole('heading', { name: '프로젝트 생성', exact: true })
+    .click()
+  await page
+    .getByRole('button', { name: '현재 내용으로 승인', exact: true })
+    .click()
+  await waitText('현재 내용으로 승인했습니다.')
+  assert.deepEqual(reviewMutations[0], {
+    method: 'POST',
+    path: '/feature-specs/9/features/101/confirm',
+  })
+  await page
+    .getByRole('heading', { name: '프로젝트 생성', exact: true })
+    .click()
+  await page.getByRole('button', { name: '수정', exact: true }).first().click()
+  await page.getByLabel('기능명', { exact: true }).fill('프로젝트 만들기')
+  await page.getByRole('button', { name: '저장', exact: true }).click()
+  await waitText('기능을 수정했습니다.')
+  assert.equal(reviewMutations[1].method, 'PATCH')
+  assert.equal(reviewMutations[1].body.name, '프로젝트 만들기')
   await prepareReplacement()
   await page.getByRole('button', { name: '취소', exact: true }).click()
   assert.equal(mutations.length, 0)
@@ -214,6 +410,16 @@ try {
   specState = 'completed'
   await page.setViewportSize({ width: 390, height: 844 })
   await open()
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+    false,
+  )
+  await page.screenshot({
+    path: '/private/tmp/galpi-feature-review-mobile.png',
+    fullPage: true,
+  })
   await prepareReplacement()
   assert.equal(
     await page.evaluate(

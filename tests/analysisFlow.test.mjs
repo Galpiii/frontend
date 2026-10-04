@@ -17,6 +17,7 @@ async function modules(t) {
     'lib/projectOverviewApi',
     'lib/pullRequestApi',
     'lib/featureSpecApi',
+    'lib/featureReviewApi',
     'analysis/prRetry',
     'analysis/featureSpecUpload',
     'analysis/analysisFlow',
@@ -49,6 +50,7 @@ async function modules(t) {
     'lib/projectOverviewApi',
     'lib/pullRequestApi',
     'lib/featureSpecApi',
+    'lib/featureReviewApi',
     'analysis/prRetry',
     'analysis/featureSpecUpload',
     'auth/session',
@@ -1082,6 +1084,184 @@ test('feature spec upload uses the existing endpoint and never hides an uncertai
   await assert.rejects(uploadFeatureSpec(7, file), FeatureSpecUploadUnknown)
   outcome = 'network'
   await assert.rejects(uploadFeatureSpec(7, file), FeatureSpecUploadUnknown)
+})
+
+test('feature review reads server groups, summary counts and exact filters', async (t) => {
+  const { exchangeLoginCode, getFeatureReviewList, getFeatureReviewSummary } =
+    await modules(t)
+  const paths = []
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = new URL(url)
+    if (u.pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    paths.push(u.pathname + u.search)
+    if (u.pathname.endsWith('/review-summary'))
+      return Response.json({
+        data: { reviewRequired: 1, noIssue: 1, reviewed: 1, total: 3 },
+      })
+    return Response.json({
+      data: {
+        sections: [
+          {
+            sectionId: 3,
+            title: '게시글',
+            features: [
+              {
+                featureId: 12,
+                name: '게시글 작성',
+                reviewStatus: 'UNREVIEWED',
+                sourcePageStart: 3,
+                sourcePageEnd: 4,
+                requirements: [
+                  {
+                    requirementId: 34,
+                    content: '게시글을 작성한다.',
+                    sourceText: '사용자는 게시글을 작성할 수 있다.',
+                  },
+                ],
+                issues: [
+                  {
+                    issueType: 'DUPLICATE_SUSPECTED',
+                    description: '요구사항이 겹칩니다.',
+                  },
+                ],
+                duplicateCandidates: [
+                  {
+                    targetFeatureId: 19,
+                    targetFeatureName: '글쓰기',
+                    targetSourcePageStart: 6,
+                    targetSourcePageEnd: 7,
+                    targetRequirements: [],
+                    reason: '동일한 흐름입니다.',
+                    suggestedMergedName: '게시글 작성',
+                    suggestedSection: '게시글',
+                  },
+                ],
+                splitSuggestions: [],
+              },
+            ],
+          },
+        ],
+      },
+    })
+  })
+  await exchangeLoginCode('fixture')
+  const summary = await getFeatureReviewSummary(9)
+  const list = await getFeatureReviewList(9, 'REVIEW_REQUIRED')
+  await getFeatureReviewList(9, 'ALL')
+  assert.deepEqual(summary, {
+    reviewRequired: 1,
+    noIssue: 1,
+    reviewed: 1,
+    total: 3,
+  })
+  assert.equal(
+    list.sections[0].features[0].requirements[0].sourceText,
+    '사용자는 게시글을 작성할 수 있다.',
+  )
+  assert.deepEqual(paths, [
+    '/feature-specs/9/review-summary',
+    '/feature-specs/9/features?filter=REVIEW_REQUIRED',
+    '/feature-specs/9/features',
+  ])
+})
+
+test('feature review rejects malformed counts and remote feature shapes', async (t) => {
+  const { exchangeLoginCode, getFeatureReviewList, getFeatureReviewSummary } =
+    await modules(t)
+  let malformed = 'summary'
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url.endsWith('/auth/token'))
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    return malformed === 'summary'
+      ? Response.json({
+          data: { reviewRequired: 2, noIssue: 2, reviewed: 2, total: 3 },
+        })
+      : Response.json({
+          data: {
+            sections: [
+              { sectionId: 1, title: '기능', features: [{ featureId: 1 }] },
+            ],
+          },
+        })
+  })
+  await exchangeLoginCode('fixture')
+  await assert.rejects(getFeatureReviewSummary(9), /응답/)
+  malformed = 'list'
+  await assert.rejects(getFeatureReviewList(9, 'ALL'), /응답/)
+})
+
+test('feature review mutations use the committed contracts and classify uncertain results', async (t) => {
+  const {
+    confirmAllFeatures,
+    confirmFeature,
+    deleteFeature,
+    exchangeLoginCode,
+    mergeFeature,
+    splitFeature,
+    updateFeature,
+    FeatureReviewMutationRejected,
+    FeatureReviewMutationUnknown,
+  } = await modules(t)
+  const calls = []
+  let outcome = 200
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const path = new URL(url).pathname
+    if (path === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    calls.push({ path, method: init.method, body: init.body })
+    if (outcome === 'network') throw new TypeError('connection dropped')
+    return new Response(null, { status: outcome })
+  })
+  await exchangeLoginCode('fixture')
+
+  await confirmAllFeatures(9)
+  await confirmFeature(9, 12)
+  await updateFeature(9, 12, {
+    name: '게시글 관리',
+    requirements: [{ id: 34, content: '게시글을 관리한다.' }],
+  })
+  await mergeFeature(9, 12, 19, '게시글 작성')
+  await splitFeature(9, 12, {
+    features: [{ suggestionId: 7, name: '게시글 관리' }],
+  })
+  await deleteFeature(9, 12)
+
+  assert.deepEqual(
+    calls.map(({ path, method }) => [path, method]),
+    [
+      ['/feature-specs/9/features/confirm-all', 'POST'],
+      ['/feature-specs/9/features/12/confirm', 'POST'],
+      ['/feature-specs/9/features/12', 'PATCH'],
+      ['/feature-specs/9/features/12/merge', 'POST'],
+      ['/feature-specs/9/features/12/split', 'POST'],
+      ['/feature-specs/9/features/12', 'DELETE'],
+    ],
+  )
+  assert.deepEqual(JSON.parse(calls[2].body), {
+    name: '게시글 관리',
+    requirements: [{ id: 34, content: '게시글을 관리한다.' }],
+  })
+  assert.deepEqual(JSON.parse(calls[3].body), {
+    targetFeatureId: 19,
+    name: '게시글 작성',
+  })
+  assert.deepEqual(JSON.parse(calls[4].body), {
+    features: [{ suggestionId: 7, name: '게시글 관리' }],
+  })
+
+  outcome = 400
+  await assert.rejects(confirmFeature(9, 12), FeatureReviewMutationRejected)
+  outcome = 500
+  await assert.rejects(confirmFeature(9, 12), FeatureReviewMutationUnknown)
+  outcome = 'network'
+  await assert.rejects(confirmFeature(9, 12), FeatureReviewMutationUnknown)
 })
 
 test('replacement uses PUT multipart and never falls back to POST on rejection', async (t) => {
