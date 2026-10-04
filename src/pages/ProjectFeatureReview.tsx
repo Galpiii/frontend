@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useSyncExternalStore,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useSearchParams } from 'react-router'
 import {
   Alert,
@@ -17,8 +22,6 @@ import {
   confirmAllFeatures,
   confirmFeature,
   deleteFeature,
-  FeatureReviewMutationRejected,
-  FeatureReviewMutationUnknown,
   getFeatureReviewList,
   getFeatureReviewSummary,
   mergeFeature,
@@ -32,6 +35,8 @@ import {
   type FeatureReviewSummary,
 } from '../lib/featureReviewApi'
 
+import { getFeatureReviewOwner } from '../analysis/featureReview'
+
 type ReviewDialog =
   | { kind: 'confirm-all' }
   | { kind: 'edit'; feature: FeatureReviewItem }
@@ -39,8 +44,6 @@ type ReviewDialog =
   | { kind: 'split'; feature: FeatureReviewItem }
   | { kind: 'delete'; feature: FeatureReviewItem }
   | null
-
-type Notice = { tone: Tone; message: string } | null
 
 const filterQuery: Record<string, FeatureReviewFilter> = {
   required: 'REVIEW_REQUIRED',
@@ -316,9 +319,16 @@ export function ProjectFeatureReview({
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [dialog, setDialog] = useState<ReviewDialog>(null)
-  const [notice, setNotice] = useState<Notice>(null)
-  const [pendingAction, setPendingAction] = useState('')
-  const mutationLock = useRef(false)
+  const owner = getFeatureReviewOwner(specDocumentId)
+  const mutation = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
+  const [loadedRevision, setLoadedRevision] = useState(-1)
+  const { notice } = mutation
+  const pendingAction = mutation.label
+  const busy =
+    mutation.phase !== 'idle' ||
+    !result ||
+    !!error ||
+    loadedRevision !== mutation.revision
   const [editName, setEditName] = useState('')
   const [editRequirements, setEditRequirements] = useState<
     { id?: number; content: string }[]
@@ -333,6 +343,7 @@ export function ProjectFeatureReview({
     async function load() {
       setResult(null)
       setError('')
+      setSummary(null)
       const [summaryResult, listResult] = await Promise.allSettled([
         getFeatureReviewSummary(specDocumentId, controller.signal),
         getFeatureReviewList(specDocumentId, filter, controller.signal),
@@ -340,6 +351,7 @@ export function ProjectFeatureReview({
       if (controller.signal.aborted) return
       if (summaryResult.status === 'fulfilled') setSummary(summaryResult.value)
       if (listResult.status === 'fulfilled') setResult(listResult.value)
+      setLoadedRevision(mutation.revision)
       if (
         summaryResult.status === 'rejected' ||
         listResult.status === 'rejected'
@@ -348,40 +360,16 @@ export function ProjectFeatureReview({
     }
     void load()
     return () => controller.abort()
-  }, [specDocumentId, filter, attempt])
-
-  const reload = () => setAttempt((value) => value + 1)
+  }, [specDocumentId, filter, attempt, mutation.revision])
 
   const runMutation = async (
     label: string,
     request: () => Promise<void>,
     successMessage: string,
   ) => {
-    if (mutationLock.current) return
-    mutationLock.current = true
-    setPendingAction(label)
-    setNotice(null)
-    try {
-      await request()
-      setDialog(null)
-      setNotice({ tone: 'success', message: successMessage })
-    } catch (caught) {
-      if (caught instanceof FeatureReviewMutationUnknown) {
-        setDialog(null)
-        setNotice({ tone: 'warning', message: caught.message })
-      } else {
-        const message =
-          caught instanceof FeatureReviewMutationRejected
-            ? caught.message
-            : '기능 검토 내용을 저장하지 못했습니다.'
-        if (dialog) setFormError(message)
-        else setNotice({ tone: 'danger', message })
-      }
-    } finally {
-      mutationLock.current = false
-      setPendingAction('')
-      reload()
-    }
+    if (busy) return
+    setDialog(null)
+    await owner.run(label, request, successMessage)
   }
 
   const openEdit = (feature: FeatureReviewItem) => {
@@ -544,7 +532,7 @@ export function ProjectFeatureReview({
                 <Button
                   size="sm"
                   variant="secondary"
-                  disabled={!!pendingAction}
+                  disabled={busy}
                   onClick={() => {
                     setFormError('')
                     setDialog({ kind: 'confirm-all' })
@@ -564,7 +552,7 @@ export function ProjectFeatureReview({
           <Button
             variant="secondary"
             size="sm"
-            disabled={replaceDisabled}
+            disabled={replaceDisabled || busy}
             onClick={onReplace}
           >
             기능명세서 교체
@@ -577,6 +565,24 @@ export function ProjectFeatureReview({
       {notice && <Alert tone={notice.tone}>{notice.message}</Alert>}
 
       {pendingAction && <Alert tone="info">{pendingAction}</Alert>}
+      {(mutation.phase === 'uncertain' || mutation.phase === 'read-error') && (
+        <Alert
+          tone="warning"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void owner.refresh()}
+            >
+              최신 목록 확인
+            </Button>
+          }
+        >
+          {mutation.phase === 'read-error'
+            ? '최신 목록과 요약을 확인하지 못했습니다. 확인 전까지 변경을 잠시 막습니다.'
+            : '목록을 조회했지만 이전 요청의 완료 여부는 확정할 수 없습니다. 중복 처리를 막기 위해 추가 변경을 잠시 막습니다.'}
+        </Alert>
+      )}
 
       <div
         className="flex flex-wrap items-center gap-2"
@@ -642,7 +648,7 @@ export function ProjectFeatureReview({
                     key={feature.featureId}
                     feature={feature}
                     expanded={filter === 'REVIEW_REQUIRED'}
-                    busy={!!pendingAction}
+                    busy={busy}
                     onConfirm={() =>
                       void runMutation(
                         '기능 승인 중',
@@ -675,7 +681,7 @@ export function ProjectFeatureReview({
           <>
             <Button
               variant="secondary"
-              disabled={!!pendingAction}
+              disabled={busy}
               onClick={() => setDialog(null)}
             >
               취소
@@ -710,7 +716,7 @@ export function ProjectFeatureReview({
           <>
             <Button
               variant="secondary"
-              disabled={!!pendingAction}
+              disabled={busy}
               onClick={() => setDialog(null)}
             >
               취소
@@ -730,7 +736,7 @@ export function ProjectFeatureReview({
             label="기능명"
             value={editName}
             maxLength={255}
-            disabled={!!pendingAction}
+            disabled={busy}
             onChange={(event) => setEditName(event.target.value)}
           />
           <div className="space-y-3">
@@ -760,7 +766,7 @@ export function ProjectFeatureReview({
                     label={`요구사항 ${index + 1}`}
                     value={requirement.content}
                     maxLength={2000}
-                    disabled={!!pendingAction}
+                    disabled={busy}
                     onChange={(event) =>
                       setEditRequirements((current) =>
                         current.map((item, itemIndex) =>
@@ -775,7 +781,7 @@ export function ProjectFeatureReview({
                     className="mt-2"
                     size="sm"
                     variant="ghost"
-                    disabled={!!pendingAction}
+                    disabled={busy}
                     onClick={() =>
                       setEditRequirements((current) =>
                         current.filter((_, itemIndex) => itemIndex !== index),
@@ -812,7 +818,7 @@ export function ProjectFeatureReview({
           <>
             <Button
               variant="secondary"
-              disabled={!!pendingAction}
+              disabled={busy}
               onClick={() => setDialog(null)}
             >
               취소
@@ -831,7 +837,7 @@ export function ProjectFeatureReview({
           <Select
             label="병합할 중복 후보"
             value={mergeTargetId ?? ''}
-            disabled={!!pendingAction}
+            disabled={busy}
             onChange={(event) => {
               const target = Number(event.target.value)
               setMergeTargetId(target)
@@ -857,7 +863,7 @@ export function ProjectFeatureReview({
             label="병합 후 기능명"
             value={mergeName}
             maxLength={255}
-            disabled={!!pendingAction}
+            disabled={busy}
             onChange={(event) => setMergeName(event.target.value)}
           />
           <Alert tone="warning">
@@ -876,7 +882,7 @@ export function ProjectFeatureReview({
           <>
             <Button
               variant="secondary"
-              disabled={!!pendingAction}
+              disabled={busy}
               onClick={() => setDialog(null)}
             >
               취소
@@ -902,7 +908,7 @@ export function ProjectFeatureReview({
                   label={`분리 기능 ${index + 1}`}
                   value={splitNames[suggestion.suggestionId] ?? ''}
                   maxLength={255}
-                  disabled={!!pendingAction}
+                  disabled={busy}
                   hint={`${suggestion.suggestedSection} · 요구사항 ${suggestion.requirements.length}개`}
                   onChange={(event) =>
                     setSplitNames((current) => ({
@@ -930,7 +936,7 @@ export function ProjectFeatureReview({
           <>
             <Button
               variant="secondary"
-              disabled={!!pendingAction}
+              disabled={busy}
               onClick={() => setDialog(null)}
             >
               취소

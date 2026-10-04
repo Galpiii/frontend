@@ -18,6 +18,7 @@ async function modules(t) {
     'lib/pullRequestApi',
     'lib/featureSpecApi',
     'lib/featureReviewApi',
+    'analysis/featureReview',
     'analysis/prRetry',
     'analysis/featureSpecUpload',
     'analysis/analysisFlow',
@@ -51,6 +52,7 @@ async function modules(t) {
     'lib/pullRequestApi',
     'lib/featureSpecApi',
     'lib/featureReviewApi',
+    'analysis/featureReview',
     'analysis/prRetry',
     'analysis/featureSpecUpload',
     'auth/session',
@@ -1406,4 +1408,123 @@ test('explicit spec rejection allows only a new manual intent', async (t) => {
   await store.request(7, {}, undefined, async () => true)
   assert.equal(posts, 2)
   assert.equal(store.get(7).phase, 'accepted')
+})
+
+test('review owner survives unsubscribe and locks until both reconciliation reads settle', async (t) => {
+  const { getFeatureReviewOwner, exchangeLoginCode } = await modules(t)
+  const read = deferred()
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (new URL(url).pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    await read.promise
+    return Response.json({
+      data: url.endsWith('/features')
+        ? { sections: [] }
+        : { total: 0, reviewed: 0, noIssue: 0, reviewRequired: 0 },
+    })
+  })
+  await exchangeLoginCode('fixture')
+  const owner = getFeatureReviewOwner(9)
+  const request = deferred()
+  let calls = 0
+  const unsubscribe = owner.subscribe(() => {})
+  const pending = owner.run(
+    '승인 중',
+    () => {
+      calls++
+      return request.promise
+    },
+    '승인 완료',
+  )
+  unsubscribe()
+  assert.equal(getFeatureReviewOwner(9), owner)
+  assert.notEqual(getFeatureReviewOwner(10), owner)
+  assert.equal(
+    await owner.run(
+      '중복',
+      () => {
+        calls++
+      },
+      '',
+    ),
+    false,
+  )
+  request.resolve()
+  await tick()
+  assert.equal(owner.getSnapshot().phase, 'checking')
+  assert.equal(
+    await owner.run(
+      '중복',
+      () => {
+        calls++
+      },
+      '',
+    ),
+    false,
+  )
+  read.resolve()
+  await pending
+  assert.equal(calls, 1)
+  assert.equal(owner.getSnapshot().phase, 'idle')
+})
+
+test('review reconciliation failures block writes; GET recovery does not resolve uncertain intent', async (t) => {
+  const {
+    getFeatureReviewOwner,
+    exchangeLoginCode,
+    FeatureReviewMutationUnknown,
+    FeatureReviewMutationRejected,
+  } = await modules(t)
+  let fail = true
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (new URL(url).pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    reads++
+    if (fail && url.endsWith('/review-summary'))
+      return new Response(null, { status: 503 })
+    return Response.json({
+      data: url.endsWith('/features')
+        ? { sections: [] }
+        : { total: 0, reviewed: 0, noIssue: 0, reviewRequired: 0 },
+    })
+  })
+  await exchangeLoginCode('fixture')
+  for (const unknown of [false, true]) {
+    fail = true
+    const owner = getFeatureReviewOwner(unknown ? 10 : 9)
+    await owner.run(
+      '승인 중',
+      async () => {
+        throw unknown
+          ? new FeatureReviewMutationUnknown('불확실')
+          : new FeatureReviewMutationRejected('거절')
+      },
+      '',
+    )
+    assert.equal(owner.getSnapshot().phase, 'read-error')
+    assert.equal(
+      await owner.run('', () => assert.fail('must not resend'), ''),
+      false,
+    )
+    fail = false
+    await owner.refresh()
+    assert.equal(owner.getSnapshot().phase, unknown ? 'uncertain' : 'idle')
+    assert.equal(
+      owner.getSnapshot().notice.tone,
+      unknown ? 'warning' : 'danger',
+    )
+    if (unknown) {
+      await owner.refresh()
+      assert.equal(
+        await owner.run('', () => assert.fail('must not resend'), ''),
+        false,
+      )
+    }
+  }
+  assert.equal(reads, 10)
 })
