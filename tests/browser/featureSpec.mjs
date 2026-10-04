@@ -12,7 +12,7 @@ let mutations = []
 let reviewMutations = []
 let agreed = true
 let consentPosts = 0
-const reviewFeatures = [
+let reviewFeatures = [
   {
     featureId: 101,
     name: '프로젝트 생성',
@@ -98,6 +98,24 @@ const reviewFeatures = [
     splitSuggestions: [],
   },
 ]
+const originalFeatures = structuredClone(reviewFeatures)
+let reviewOutcome = 200
+let reviewGate = null
+let readGate = null
+let reviewReads = []
+const deferred = () => {
+  let resolve
+  const promise = new Promise((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+const reviewed = (feature) => {
+  feature.reviewStatus = 'USER_CONFIRMED'
+  feature.issues = []
+  feature.duplicateCandidates = []
+  feature.splitSuggestions = []
+}
 const project = () => ({
   id: 7,
   name: '갈피 프론트엔드',
@@ -185,6 +203,74 @@ await page.route('http://localhost:8080/**', async (route) => {
   if (url.pathname === '/projects/7/pull-requests')
     return ok({ totalElements: 0, totalPages: 0, pullRequests: [] })
   if (url.pathname === '/projects/7/analyses/repositories') return ok([])
+  if (url.pathname.startsWith('/feature-specs/')) {
+    if (route.request().method() === 'GET') {
+      reviewReads.push(url.pathname)
+      if (readGate) await readGate.promise
+    } else {
+      if (reviewOutcome !== 200) {
+        reviewMutations.push({
+          method: route.request().method(),
+          path: url.pathname,
+        })
+        if (reviewOutcome === 'network') return route.abort('failed')
+        return ok({}, reviewOutcome)
+      }
+      if (reviewGate) await reviewGate.promise
+    }
+  }
+  if (url.pathname.endsWith('/features/confirm-all')) {
+    reviewMutations.push({ method: 'POST', path: url.pathname })
+    reviewFeatures.forEach(reviewed)
+    return ok({})
+  }
+  const structural = url.pathname.match(
+    /\/features\/(\d+)(?:\/(merge|split))?$/,
+  )
+  if (structural && ['POST', 'DELETE'].includes(route.request().method())) {
+    const body = route.request().postDataJSON()
+    reviewMutations.push({
+      method: route.request().method(),
+      path: url.pathname,
+      body,
+    })
+    const source = reviewFeatures.find(
+      (f) => f.featureId === Number(structural[1]),
+    )
+    reviewFeatures = reviewFeatures.filter((f) => f !== source)
+    if (structural[2] === 'merge') {
+      const target = reviewFeatures.find(
+        (f) => f.featureId === body.targetFeatureId,
+      )
+      reviewFeatures = reviewFeatures.filter((f) => f !== target)
+      const merged = {
+        ...source,
+        featureId: 201,
+        name: body.name,
+        requirements: [...source.requirements, ...target.requirements],
+      }
+      reviewed(merged)
+      reviewFeatures.push(merged)
+    }
+    if (structural[2] === 'split') {
+      reviewFeatures.push(
+        ...body.features.map((f, i) => {
+          const suggestion = source.splitSuggestions.find(
+            (item) => item.suggestionId === f.suggestionId,
+          )
+          const split = {
+            ...source,
+            featureId: 201 + i,
+            name: f.name,
+            requirements: suggestion.requirements,
+          }
+          reviewed(split)
+          return split
+        }),
+      )
+    }
+    return ok({})
+  }
   if (/^\/feature-specs\/\d+\/review-summary$/.test(url.pathname)) {
     const reviewRequired = reviewFeatures.filter(
       (feature) =>
@@ -244,11 +330,15 @@ await page.route('http://localhost:8080/**', async (route) => {
     const filter = url.searchParams.get('filter')
     const features =
       filter === 'REVIEW_REQUIRED'
-        ? [reviewFeatures[0]]
+        ? reviewFeatures.filter(
+            (f) => f.reviewStatus === 'UNREVIEWED' && f.issues.length > 0,
+          )
         : filter === 'NO_ISSUE'
-          ? [reviewFeatures[1]]
+          ? reviewFeatures.filter(
+              (f) => f.reviewStatus === 'UNREVIEWED' && f.issues.length === 0,
+            )
           : filter === 'REVIEWED'
-            ? [reviewFeatures[2]]
+            ? reviewFeatures.filter((f) => f.reviewStatus !== 'UNREVIEWED')
             : reviewFeatures
     return ok({
       sections: [{ sectionId: 11, title: '프로젝트', features }],
@@ -290,6 +380,7 @@ try {
   await waitText('기능 3개를 추출했습니다')
   await page.getByRole('button', { name: '확인 필요 1', exact: true }).click()
   await waitText('프로젝트 등록 기능과 요구사항이 겹칩니다.')
+  await waitText('프로젝트 등록 기능과 요구사항이 겹칩니다.')
   assert.ok(page.url().includes('review=required'))
   await page.getByRole('button', { name: '중복 기능 병합' }).click()
   await page.getByRole('heading', { name: '중복 기능 병합' }).waitFor()
@@ -320,6 +411,176 @@ try {
   await waitText('기능을 수정했습니다.')
   assert.equal(reviewMutations[1].method, 'PATCH')
   assert.equal(reviewMutations[1].body.name, '프로젝트 만들기')
+  // Every structural action is dispatched through the actual confirmation UI.
+  for (const action of ['all', 'delete', 'merge', 'split']) {
+    reviewFeatures = structuredClone(originalFeatures)
+    reviewMutations = []
+    await open()
+    await waitText('기능 3개를 추출했습니다')
+    await page.getByRole('button', { name: '확인 필요 1', exact: true }).click()
+    await waitText('프로젝트 등록 기능과 요구사항이 겹칩니다.')
+    if (action === 'all') {
+      await page.getByRole('button', { name: '남은 기능 모두 승인' }).click()
+      await page.getByRole('button', { name: '모두 승인', exact: true }).click()
+      await waitText('남은 기능을 모두 현재 내용으로 승인했습니다.')
+    } else {
+      await page
+        .getByRole('button', {
+          name:
+            action === 'delete'
+              ? '삭제'
+              : action === 'merge'
+                ? '중복 기능 병합'
+                : '추천안대로 분리',
+          exact: true,
+        })
+        .click()
+      await page
+        .getByRole('dialog')
+        .getByRole('button', {
+          name:
+            action === 'delete' ? '삭제' : action === 'merge' ? '병합' : '분리',
+          exact: true,
+        })
+        .click()
+      await waitText(
+        action === 'delete'
+          ? '기능을 삭제했습니다.'
+          : action === 'merge'
+            ? '두 기능을 병합했습니다.'
+            : '기능을 2개로 분리했습니다.',
+      )
+    }
+    await page
+      .getByRole('button', {
+        name: '전체 ' + reviewFeatures.length,
+        exact: true,
+      })
+      .click()
+    await page.getByRole('button', { name: '기능명세서 교체' }).waitFor()
+    assert.equal(reviewMutations.length, 1)
+    if (action === 'all')
+      assert.ok(
+        reviewFeatures.every((f) => f.reviewStatus === 'USER_CONFIRMED'),
+      )
+    else
+      assert.equal(
+        reviewFeatures.some((f) => f.featureId === 101),
+        false,
+      )
+    if (action === 'merge') {
+      assert.deepEqual(reviewMutations[0].body, {
+        targetFeatureId: 102,
+        name: '프로젝트 생성',
+      })
+      assert.equal(
+        reviewFeatures.some((f) => f.featureId === 102),
+        false,
+      )
+    }
+    if (action === 'split')
+      assert.deepEqual(
+        reviewMutations[0].body.features.map((f) => f.suggestionId),
+        [301, 302],
+      )
+    await page.waitForFunction(
+      (count) => document.querySelectorAll('details').length === count,
+      reviewFeatures.length,
+    )
+    assert.equal(await page.locator('details').count(), reviewFeatures.length)
+  }
+
+  // Remount during the POST and during reconciliation, with rapid clicks.
+  reviewFeatures = structuredClone(originalFeatures)
+  reviewMutations = []
+  reviewGate = deferred()
+  await open()
+  await page.getByRole('button', { name: '확인 필요 1', exact: true }).click()
+  await waitText('프로젝트 등록 기능과 요구사항이 겹칩니다.')
+  await page
+    .getByRole('button', { name: '현재 내용으로 승인', exact: true })
+    .evaluate((button) => {
+      button.click()
+      button.click()
+    })
+  await waitText('기능 승인 중')
+  const navigateBack = async () => {
+    await page.getByRole('link', { name: '프로젝트 개요', exact: true }).click()
+    await page.getByRole('link', { name: '기능대조', exact: true }).click()
+  }
+  await navigateBack()
+  await waitText('기능 승인 중')
+  assert.equal(
+    await page
+      .getByRole('button', { name: '남은 기능 모두 승인' })
+      .isDisabled(),
+    true,
+  )
+  readGate = deferred()
+  reviewGate.resolve()
+  reviewGate = null
+  await waitText('최신 기능 목록 확인 중')
+  await navigateBack()
+  await waitText('최신 기능 목록 확인 중')
+  readGate.resolve()
+  readGate = null
+  await page.getByRole('button', { name: '남은 기능 모두 승인' }).waitFor()
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('button')].some(
+      (b) => b.textContent.includes('남은 기능 모두 승인') && !b.disabled,
+    ),
+  )
+  assert.equal(reviewMutations.length, 1)
+
+  for (const status of [400, 404, 409, 'network', 408, 425, 500, 503]) {
+    reviewFeatures = structuredClone(originalFeatures)
+    reviewMutations = []
+    reviewOutcome = status
+    await open()
+    await page.getByRole('button', { name: '확인 필요 1', exact: true }).click()
+    await waitText('프로젝트 등록 기능과 요구사항이 겹칩니다.')
+    reviewReads = []
+    await page
+      .getByRole('button', { name: '현재 내용으로 승인', exact: true })
+      .click()
+    const unknown =
+      status === 'network' || status === 408 || status === 425 || status >= 500
+    await waitText(
+      unknown
+        ? '이전 요청의 완료 여부는 확정할 수 없습니다'
+        : status === 400
+          ? '요청 내용을 적용할 수 없습니다.'
+          : status === 404
+            ? '기능이 이미 변경되었거나'
+            : '다른 요청과 동시에 변경되어',
+    )
+    await navigateBack()
+    await page.getByRole('button', { name: '남은 기능 모두 승인' }).waitFor()
+    if (unknown) {
+      await page
+        .getByRole('button', { name: '최신 목록 확인', exact: true })
+        .click()
+      await waitText('이전 요청의 완료 여부는 확정할 수 없습니다')
+      assert.equal(
+        await page
+          .getByRole('button', { name: '남은 기능 모두 승인' })
+          .isDisabled(),
+        true,
+      )
+    } else {
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('button')].some(
+          (b) => b.textContent.includes('남은 기능 모두 승인') && !b.disabled,
+        ),
+      )
+    }
+    assert.equal(reviewMutations.length, 1)
+    assert.ok(reviewReads.some((path) => path.endsWith('/features')))
+    assert.ok(reviewReads.some((path) => path.endsWith('/review-summary')))
+  }
+  reviewOutcome = 200
+  reviewFeatures = structuredClone(originalFeatures)
+  await open()
   await prepareReplacement()
   await page.getByRole('button', { name: '취소', exact: true }).click()
   assert.equal(mutations.length, 0)
@@ -438,7 +699,9 @@ try {
       .evaluate((el) => el === document.activeElement),
     true,
   )
-  console.log('Replacement and upload browser regression passed')
+  console.log(
+    'Feature review, replacement and upload browser regression passed',
+  )
 } finally {
   await browser.close()
 }
