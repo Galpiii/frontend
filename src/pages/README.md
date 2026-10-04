@@ -35,7 +35,7 @@ Every backend call is bounded by a 15 second timeout, combined with the caller's
 
 ## Configuration
 
-Set `VITE_API_BASE_URL=http://localhost:8080` in `.env`. Change it to the HTTPS backend origin and rebuild for deployment. Vite embeds environment values during the build; `.env.local` and mode-specific files can override `.env`. The obsolete `VITE_GITHUB_LOGIN_URL` is not used.
+The checked-in production configuration uses `VITE_API_BASE_URL=https://galpi-server.duckdns.org`. Copy `.env.example` to `.env` for local development and override the value only when targeting another backend. Vite embeds environment values during the build; `.env.local` and mode-specific files can override `.env`. The obsolete `VITE_GITHUB_LOGIN_URL` is not used.
 
 The backend's default frontend redirect URI must point to this SPA (for example its configured `/auth/callback` route). `returnTo` is a post-login hint, not an override for the backend's default redirect URI. Login callbacks consume `code`/`error` and navigate to `/projects`, ignoring arbitrary destinations. Installation callbacks (`installation=verified|unverified`) restore the session and return only to an exact `/projects/<positive integer>/repositories` path. External URLs and query/hash suffixes are not accepted. Production hosting must serve `index.html` for SPA routes, including `/auth/callback` and `/projects`.
 
