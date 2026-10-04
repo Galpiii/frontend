@@ -21,15 +21,11 @@ import {
   Select,
   Stepper,
   Toast,
-  type Tone,
   type ToastMessage,
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
-import {
-  AnalysisRequestRejected,
-  startProjectAnalysis,
-} from '../lib/projectApi'
+import { projectAnalysis } from '../analysis/projectAnalysis'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { ONBOARDING_STEPS } from './onboardingSteps'
 import {
@@ -133,7 +129,7 @@ function failureMessage(reason: string) {
 
 function isConnectedList(
   value: unknown,
-): value is { githubRepositoryId: number }[] {
+): value is { githubRepositoryId: number; repositoryId: number }[] {
   return (
     Array.isArray(value) &&
     value.every(
@@ -141,7 +137,9 @@ function isConnectedList(
         typeof item === 'object' &&
         item !== null &&
         typeof (item as Record<string, unknown>).githubRepositoryId ===
-          'number',
+          'number' &&
+        Number.isSafeInteger((item as Record<string, unknown>).repositoryId) &&
+        Number((item as Record<string, unknown>).repositoryId) > 0,
     )
   )
 }
@@ -385,42 +383,13 @@ export function ConnectReposPage() {
       )
         throw new Error('연결 결과를 확인할 수 없습니다. 다시 시도해주세요.')
 
-      // Linking is already committed. An analysis failure must not be reported
-      // as a failed link or cause the repositories to be submitted again.
-      // The link is reported on its own; whatever the analysis does gets a
-      // second notice so neither message hides the other.
-      const notices: { text: string; tone: Tone }[] = [
-        { text: '저장소가 연결되었습니다.', tone: 'success' },
-      ]
-      try {
-        setConfirmOpen(false)
-        const run = await startProjectAnalysis(id)
-        if (analysis.flow.disposed) return
-        if (run.inaccessibleRepositoryCount > 0)
-          notices.push({
-            text: `접근할 수 없는 저장소 ${run.inaccessibleRepositoryCount}개는 분석에서 제외됩니다.`,
-            tone: 'warning',
-          })
-      } catch (cause) {
-        if (cause instanceof SessionError && cause.status === 401) return
-        notices.push(
-          cause instanceof AnalysisRequestRejected
-            ? {
-                text: '저장소 분석에 실패하였습니다. 다시 요청해주세요.',
-                tone: 'warning',
-              }
-            : {
-                // The request may still have been queued, so a retry could
-                // duplicate the run; send the user to check first.
-                text: '분석 시작 여부를 확인하지 못했습니다. 분석 상태를 확인해주세요.',
-                tone: 'warning',
-              },
-        )
-      }
-      navigate('/projects', {
-        replace: true,
-        state: { analysisNotices: notices },
-      })
+      projectAnalysis.queue(
+        id,
+        connected
+          .filter((repo) => selected.includes(repo.githubRepositoryId))
+          .map((repo) => repo.repositoryId),
+      )
+      navigate(`/project/${id}`, { replace: true })
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       setConfirmOpen(false)

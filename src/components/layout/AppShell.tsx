@@ -38,7 +38,9 @@ export function AppHeader({
 }) {
   return (
     <header className="flex min-h-14 flex-wrap items-center gap-4 border-b border-line bg-surface px-5 py-3 md:px-7">
-      <Brand name={brandName} />
+      <Link to="/projects" aria-label="갈피 홈으로 이동" className="rounded">
+        <Brand name={brandName} />
+      </Link>
       {context && <div className="text-[13px] text-muted">{context}</div>}
       <div className="ml-auto flex items-center gap-3">{actions}</div>
     </header>

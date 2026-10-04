@@ -25,3 +25,6 @@ dist-ssr
 
 .env
 .agents
+
+# Dedicated local integration sessions (contain authentication cookies)
+.auth/

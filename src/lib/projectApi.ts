@@ -2,13 +2,41 @@ import { authenticatedFetch } from '../auth/session.ts'
 import { ConsentRequired } from './consentApi.ts'
 import { projectPaths, readData } from './api.ts'
 
+export interface LinkedRepository {
+  repositoryId: number
+  fullName: string
+  private?: boolean
+  defaultBranch?: string | null
+  accessStatus?: string
+  lastSyncedAt?: string | null
+}
 export interface ProjectDetail {
   id: number
   name: string
   status: string
   onboardingStep: string
-  repositories: { repositoryId: number; fullName: string }[]
-  specDocument: { fileName: string } | null
+  repositories: LinkedRepository[]
+  lastAnalysis?: {
+    analysisRunId: number
+    status: string
+    requestedAt?: string
+  } | null
+  specDocument: {
+    fileName: string
+    specDocumentId?: number
+    extractionStatus?: string
+  } | null
+}
+
+function isLastAnalysis(value: unknown): boolean {
+  if (value === null || value === undefined) return true
+  if (typeof value !== 'object') return false
+  const run = value as Record<string, unknown>
+  return (
+    Number.isSafeInteger(run.analysisRunId) &&
+    typeof run.status === 'string' &&
+    (run.requestedAt == null || typeof run.requestedAt === 'string')
+  )
 }
 
 function isProjectDetail(value: unknown): value is ProjectDetail {
@@ -19,20 +47,36 @@ function isProjectDetail(value: unknown): value is ProjectDetail {
     typeof project.name === 'string' &&
     typeof project.status === 'string' &&
     typeof project.onboardingStep === 'string' &&
+    isLastAnalysis(project.lastAnalysis) &&
     Array.isArray(project.repositories) &&
     project.repositories.every((repo: unknown) => {
       if (typeof repo !== 'object' || repo === null) return false
       const repository = repo as Record<string, unknown>
       return (
         typeof repository.repositoryId === 'number' &&
-        typeof repository.fullName === 'string'
+        typeof repository.fullName === 'string' &&
+        (repository.private === undefined ||
+          typeof repository.private === 'boolean') &&
+        ['defaultBranch', 'lastSyncedAt', 'accessStatus'].every(
+          (key) =>
+            repository[key] == null || typeof repository[key] === 'string',
+        )
       )
     }) &&
     (project.specDocument === null ||
       (typeof project.specDocument === 'object' &&
         project.specDocument !== null &&
         typeof (project.specDocument as Record<string, unknown>).fileName ===
-          'string'))
+          'string' &&
+        ((project.specDocument as Record<string, unknown>).extractionStatus ===
+          undefined ||
+          typeof (project.specDocument as Record<string, unknown>)
+            .extractionStatus === 'string') &&
+        ((project.specDocument as Record<string, unknown>).specDocumentId ===
+          undefined ||
+          Number.isSafeInteger(
+            (project.specDocument as Record<string, unknown>).specDocumentId,
+          ))))
   )
 }
 
@@ -81,7 +125,8 @@ function isAnalysisRun(value: unknown): value is AnalysisRun {
 }
 
 /**
- * A 4xx refusal confirms that the request was rejected.
+ * Most 4xx responses confirm rejection. 408/425 are ambiguous; 409 may
+ * indicate an existing run, so these must be reconciled through status reads.
  * A 5xx or any other failure — a dropped connection, a timeout, an unreadable body
  * after a 2xx — leaves the run's fate unknown, and the user must not be told to
  * request it again.
@@ -96,16 +141,38 @@ export class AnalysisRequestRejected extends Error {
 export async function startProjectAnalysis(
   projectId: number,
   signal?: AbortSignal,
+  repositoryIds?: number[],
 ) {
-  const response = await authenticatedFetch(projectPaths.analyses(projectId), {
-    method: 'POST',
-    signal,
-  })
+  if (
+    repositoryIds &&
+    (repositoryIds.length === 0 ||
+      repositoryIds.some((id) => !Number.isSafeInteger(id) || id <= 0))
+  )
+    throw new AnalysisRequestRejected()
+  // A separate endpoint fails closed against older servers; never fall back to all.
+  const response = await authenticatedFetch(
+    projectPaths.analyses(projectId) + (repositoryIds ? '/selected' : ''),
+    {
+      method: 'POST',
+      ...(repositoryIds
+        ? {
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repositoryIds }),
+          }
+        : {}),
+      signal,
+    },
+  )
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     if (response.status === 403 && body?.code === 'CONSENT-001')
       throw new ConsentRequired()
-    if (response.status < 500) throw new AnalysisRequestRejected()
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      ![408, 409, 425].includes(response.status)
+    )
+      throw new AnalysisRequestRejected()
     throw new Error('Analysis outcome unknown')
   }
   return readData(response, isAnalysisRun, '분석 응답을 확인할 수 없습니다.')

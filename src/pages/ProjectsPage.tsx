@@ -21,10 +21,7 @@ import {
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
-import {
-  analysisStartedMessage,
-  AnalysisRequestRejected,
-} from '../lib/projectApi'
+import { projectAnalysis } from '../analysis/projectAnalysis'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 interface Project {
@@ -214,24 +211,12 @@ export function ProjectsPage() {
     if (analysis.flow.state.phase !== 'idle') return
     setRefreshingId(project.id)
     try {
-      const run = await analysis.flow.start(project.id)
-      if (!run) return
-      showToast(
-        analysisStartedMessage(run.inaccessibleRepositoryCount),
-        run.inaccessibleRepositoryCount > 0 ? 'warning' : 'success',
-      )
-      reload()
+      if (!(await analysis.flow.requestConsent())) return
+      projectAnalysis.queue(project.id)
+      navigate(`/project/${project.id}`)
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
-      // Only a refusal is a confirmed failure. A dropped connection may still
-      // have queued the run, and its raw message is not for the reader.
-      if (cause instanceof AnalysisRequestRejected)
-        showToast('분석을 요청하지 못했습니다. 다시 시도해주세요.', 'danger')
-      else
-        showToast(
-          '분석 시작 여부를 확인하지 못했습니다. 잠시 후 상태를 다시 확인해주세요.',
-          'warning',
-        )
+      showToast('동의 정보를 확인하지 못했습니다.', 'danger')
     } finally {
       setRefreshingId(null)
     }
@@ -280,7 +265,7 @@ export function ProjectsPage() {
   const hasProjects = (result?.projects.length ?? 0) > 0
 
   return (
-    <AppShell header={<AppHeader context="프로젝트" />}>
+    <AppShell header={<AppHeader />}>
       <div className="mx-auto max-w-[1120px] space-y-5 py-1 sm:py-2">
         <SectionHeader
           level={1}
@@ -353,7 +338,7 @@ export function ProjectsPage() {
                   <div className="flex items-start justify-between gap-3">
                     <h2 className="min-w-0 break-words text-[15px] font-extrabold">
                       <Link
-                        to={`/projects/${project.id}`}
+                        to={`/project/${project.id}`}
                         className="after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-primary"
                       >
                         {project.name}
