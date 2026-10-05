@@ -7,12 +7,14 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { useNavigate, useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { useAnalysisStart } from '../analysis/useAnalysisStart'
 import { featureSpecUpload } from '../analysis/featureSpecUpload'
 import { projectAnalysis } from '../analysis/projectAnalysis'
+import { getMatchOwner } from '../analysis/featureMatch'
 import { AiConsentModal } from '../components/AiConsentModal'
 import { ProjectFeatureReview } from './ProjectFeatureReview'
+import { ProjectFeatureMatch } from './ProjectFeatureMatch'
 import {
   Alert,
   Badge,
@@ -359,12 +361,13 @@ function MatchResults({
   project,
   stage,
   openSpec,
+  onStartConsent,
 }: {
   project: ProjectDetail
   stage: FeatureSpecStage
   openSpec: () => void
+  onStartConsent: () => Promise<boolean>
 }) {
-  const navigate = useNavigate()
   if (stage === 'empty' || stage === 'failed')
     return (
       <EmptyState
@@ -385,18 +388,15 @@ function MatchResults({
         }
       />
     )
+  if (stage === 'ready' && project.specDocument?.specDocumentId)
+    return (
+      <ProjectFeatureMatch project={project} onStartConsent={onStartConsent} />
+    )
   return (
     <EmptyState
-      title="기능별 대조 결과를 준비하고 있습니다"
-      description="기능 목록은 기능명세서 보기에서 검토할 수 있습니다. 기능과 PR의 실제 대조 결과는 관련 API가 제공된 뒤 연결됩니다."
-      action={
-        <Button
-          variant="secondary"
-          onClick={() => navigate(`/project/${project.id}?tab=prs`)}
-        >
-          PR 목록 보기
-        </Button>
-      }
+      title="기능명세서 상태를 확인할 수 없습니다"
+      description="서버 상태를 다시 확인한 뒤 대조를 시작해주세요."
+      action={<Button onClick={openSpec}>명세서 상태 보기</Button>}
     />
   )
 }
@@ -418,16 +418,30 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
   const [message, setMessage] = useState('')
   const [messageTone, setMessageTone] = useState<Tone>('danger')
   const stage = getFeatureSpecStage(project.specDocument)
-  const view = searchParams.get('view') === 'results' ? 'results' : 'spec'
+  const matchOwner = getMatchOwner(project.id)
+  const matchState = useSyncExternalStore(
+    matchOwner.subscribe,
+    matchOwner.getSnapshot,
+  )
+  const requestedView = searchParams.get('view')
+  const view =
+    requestedView === 'spec' || requestedView === 'results'
+      ? requestedView
+      : matchState.run
+        ? 'results'
+        : 'spec'
 
   useEffect(() => {
     featureSpecUpload.observe(project.id, project)
   }, [project, project.id])
 
+  useEffect(() => {
+    void matchOwner.refresh()
+  }, [matchOwner])
+
   const setView = (nextView: 'spec' | 'results') => {
     const next = new URLSearchParams(searchParams)
-    if (nextView === 'spec') next.delete('view')
-    else next.set('view', 'results')
+    next.set('view', nextView)
     setSearchParams(next, { replace: true })
   }
 
@@ -533,6 +547,10 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
           project={project}
           stage={stage}
           openSpec={() => setView('spec')}
+          onStartConsent={async () =>
+            (await consent.flow.requestConsent('feature-match')) &&
+            !consent.flow.disposed
+          }
         />
       ) : stage === 'empty' ? (
         uploader
