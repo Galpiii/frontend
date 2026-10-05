@@ -357,7 +357,7 @@ const pick = () =>
     buffer: Buffer.from('%PDF-1.4 fixture'),
   })
 async function open() {
-  await page.goto(`${origin}/project/7?tab=match`)
+  await page.goto(`${origin}/projects/7?tab=match`)
   await page.getByRole('heading', { name: '기능대조', exact: true }).waitFor()
 }
 async function prepareReplacement() {
@@ -402,9 +402,7 @@ try {
     method: 'POST',
     path: '/feature-specs/9/features/101/confirm',
   })
-  await page
-    .getByRole('heading', { name: '프로젝트 생성', exact: true })
-    .click()
+  // The list updates in place after a mutation, so the opened card stays open.
   await page.getByRole('button', { name: '수정', exact: true }).first().click()
   await page.getByLabel('기능명', { exact: true }).fill('프로젝트 만들기')
   await page.getByRole('button', { name: '저장', exact: true }).click()
@@ -547,7 +545,7 @@ try {
       status === 'network' || status === 408 || status === 425 || status >= 500
     await waitText(
       unknown
-        ? '이전 요청의 완료 여부는 확정할 수 없습니다'
+        ? '이전 요청의 완료 여부는 확정할 수 없어'
         : status === 400
           ? '요청 내용을 적용할 수 없습니다.'
           : status === 404
@@ -560,12 +558,21 @@ try {
       await page
         .getByRole('button', { name: '최신 목록 확인', exact: true })
         .click()
-      await waitText('이전 요청의 완료 여부는 확정할 수 없습니다')
+      await waitText('이전 요청의 완료 여부는 확정할 수 없어')
       assert.equal(
         await page
           .getByRole('button', { name: '남은 기능 모두 승인' })
           .isDisabled(),
         true,
+      )
+      // Only the user lifts the lock, after the fresh list is on screen.
+      await page
+        .getByRole('button', { name: '확인했습니다, 다시 편집', exact: true })
+        .click()
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('button')].some(
+          (b) => b.textContent.includes('남은 기능 모두 승인') && !b.disabled,
+        ),
       )
     } else {
       await page.waitForFunction(() =>
@@ -620,9 +627,16 @@ try {
       )
     } else {
       await waitText('접수 여부가 불확실합니다.')
+      // Checking is offered, but unlocking needs a check first.
       assert.equal(
         await page
           .getByRole('button', { name: '서버 상태 확인', exact: true })
+          .count(),
+        1,
+      )
+      assert.equal(
+        await page
+          .getByRole('button', { name: '확인했습니다, 다시 업로드' })
           .count(),
         0,
       )
@@ -643,6 +657,18 @@ try {
           .isDisabled(),
         true,
       )
+      // An unchanged document after an explicit check lets the user unlock.
+      await page
+        .getByRole('button', { name: '서버 상태 확인', exact: true })
+        .click()
+      await waitText('서버에서 새 문서를 확인하지 못했습니다.')
+      await page
+        .getByRole('button', { name: '확인했습니다, 다시 업로드' })
+        .click()
+      await page
+        .getByRole('button', { name: '기능명세서 교체', exact: true })
+        .and(page.locator(':enabled'))
+        .waitFor()
     }
     assert.deepEqual(mutations, ['PUT'])
   }

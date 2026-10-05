@@ -1,67 +1,39 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import ts from 'typescript'
+import { loadSources } from './helpers/sources.mjs'
 
 async function modules(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'galpi-consent-test-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
-  for (const file of [
+  const load = await loadSources(t, [
     'lib/api',
-    'auth/session',
-    'lib/consentApi',
-    'lib/projectApi',
-    'lib/projectOverviewApi',
-    'lib/pullRequestApi',
-    'lib/featureSpecApi',
-    'lib/featureReviewApi',
-    'analysis/featureReview',
-    'analysis/prRetry',
-    'analysis/featureSpecUpload',
-    'analysis/analysisFlow',
-    'analysis/projectAnalysis',
-  ]) {
-    await mkdir(join(dir, file.split('/')[0]), { recursive: true })
-    const source = await readFile(
-      new URL(`../src/${file}.ts`, import.meta.url),
-      'utf8',
-    )
-    const { outputText } = ts.transpileModule(source, {
-      compilerOptions: {
-        target: ts.ScriptTarget.ES2023,
-        module: ts.ModuleKind.ESNext,
-      },
-    })
-    await writeFile(
-      join(dir, `${file}.mjs`),
-      (file === 'lib/api'
-        ? "import.meta.env = { VITE_API_BASE_URL: 'https://backend.example.test' };\n"
-        : '') + outputText.replaceAll(".ts'", ".mjs'"),
-    )
-  }
-  let result = {}
-  for (const file of [
-    'analysis/analysisFlow',
-    'analysis/projectAnalysis',
-    'lib/consentApi',
-    'lib/projectApi',
-    'lib/projectOverviewApi',
-    'lib/pullRequestApi',
-    'lib/featureSpecApi',
-    'lib/featureReviewApi',
-    'analysis/featureReview',
-    'analysis/prRetry',
-    'analysis/featureSpecUpload',
-    'auth/session',
+    'lib/format',
+    'features/auth/session',
+    'features/consent/api',
+    'features/projects/api',
+    'features/projects/overviewApi',
+    'features/pull-requests/api',
+    'features/feature-spec/api',
+    'features/feature-review/api',
+    'features/feature-review/reviewOwner',
+    'features/pull-requests/prRetry',
+    'features/feature-spec/specUpload',
+    'features/consent/analysisFlow',
+    'features/projects/projectAnalysis',
   ])
-    result = {
-      ...result,
-      ...(await import(pathToFileURL(join(dir, `${file}.mjs`)))),
-    }
-  return result
+  return load(
+    'features/consent/analysisFlow',
+    'features/projects/projectAnalysis',
+    'features/consent/api',
+    'features/projects/api',
+    'features/projects/overviewApi',
+    'features/pull-requests/api',
+    'features/feature-spec/api',
+    'features/feature-review/api',
+    'features/feature-review/reviewOwner',
+    'features/pull-requests/prRetry',
+    'features/feature-spec/specUpload',
+    'features/auth/session',
+    'lib/format',
+  )
 }
 const notice = {
   currentVersion: 'v1',
@@ -617,6 +589,25 @@ test('reload only restores server state; no pending intent is persisted or infer
   }
 })
 
+test('a 404 project read is reported as not found and a later read clears it', async (t) => {
+  const { ProjectAnalysisStore, ProjectNotFound } = await modules(t)
+  let missing = true
+  const store = new ProjectAnalysisStore({
+    get: async () => {
+      if (missing) throw new ProjectNotFound()
+      return projectFixture()
+    },
+    start: () => assert.fail('a read must never POST'),
+  })
+  await store.refresh(7)
+  assert.equal(store.get(7).notFound, true)
+  assert.equal(store.get(7).error, undefined)
+  missing = false
+  await store.refresh(7)
+  assert.equal(store.get(7).notFound, false)
+  assert.ok(store.get(7).project)
+})
+
 test('preflight catches already-running analysis and deduplicates overlapping status reads', async (t) => {
   const { ProjectAnalysisStore } = await modules(t)
   let reads = 0
@@ -935,7 +926,7 @@ test('failed PR retry is deduplicated across drawer lifetimes and never recollec
   assert.equal(store.get(7).phase, 'idle')
 })
 
-test('uncertain PR retry cannot be resent even after status checks', async (t) => {
+test('uncertain PR retry stays locked while work is pending and unlocks only on a check with none pending', async (t) => {
   const { PrRetryStore } = await modules(t)
   let posts = 0
   const store = new PrRetryStore(async () => {
@@ -943,10 +934,17 @@ test('uncertain PR retry cannot be resent even after status checks', async (t) =
     throw new Error('timeout')
   })
   await store.request(7)
-  store.allowAfterStatus(7, 0)
   await store.request(7)
   assert.equal(posts, 1)
+  store.allowAfterStatus(7, 2)
   assert.equal(store.get(7).phase, 'unknown')
+  assert.match(store.get(7).message, /2건/)
+  await store.request(7)
+  assert.equal(posts, 1)
+  store.allowAfterStatus(7, 0)
+  assert.equal(store.get(7).phase, 'idle')
+  await store.request(7)
+  assert.equal(posts, 2)
 })
 
 test('PR detail and failed-only retry use their dedicated endpoints', async (t) => {
@@ -1366,6 +1364,44 @@ test('uncertain spec request remains blocked after unchanged, missing, or failed
   assert.equal(store.get(7).phase, 'unknown')
 })
 
+test('an uncertain spec request unlocks only by the user after an explicit status check', async (t) => {
+  const { FeatureSpecUploadStore } = await modules(t)
+  let puts = 0
+  const store = new FeatureSpecUploadStore({
+    get: async () => ({
+      ...projectFixture(),
+      specDocument: {
+        specDocumentId: 9,
+        extractionStatus: 'FAILED',
+        fileName: 'old.pdf',
+      },
+    }),
+    upload: () => assert.fail('no fallback'),
+    replace: async () => {
+      if (++puts === 1) throw Error('timeout')
+    },
+  })
+  const submit = () => store.request(7, {}, 9, async () => true)
+  await submit()
+  assert.equal(store.get(7).phase, 'unknown')
+  assert.equal(store.acknowledge(7), false, 'no unlock before a status check')
+  await store.check(7)
+  assert.equal(store.get(7).phase, 'unknown')
+  await submit()
+  assert.equal(puts, 1, 'a check alone never resends')
+  assert.equal(store.acknowledge(7), true)
+  assert.equal(store.get(7).phase, 'idle')
+  await submit()
+  assert.equal(puts, 2)
+  assert.equal(store.get(7).phase, 'accepted')
+  await store.check(7)
+  assert.equal(
+    store.acknowledge(7),
+    false,
+    'an accepted request is not unlocked',
+  )
+})
+
 test('spec consent cancellation, unmount during preflight and changed document never dispatch', async (t) => {
   const { FeatureSpecUploadStore } = await modules(t)
   let document = { specDocumentId: 10, extractionStatus: 'COMPLETED' }
@@ -1467,6 +1503,54 @@ test('review owner survives unsubscribe and locks until both reconciliation read
   read.resolve()
   await pending
   assert.equal(calls, 1)
+  assert.equal(owner.getSnapshot().phase, 'idle')
+})
+
+test('an uncertain review lock lifts only by explicit acknowledgement after a successful read', async (t) => {
+  const {
+    getFeatureReviewOwner,
+    exchangeLoginCode,
+    FeatureReviewMutationUnknown,
+  } = await modules(t)
+  let fail = false
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (new URL(url).pathname === '/auth/token')
+      return Response.json({
+        data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
+      })
+    if (fail) return new Response(null, { status: 503 })
+    return Response.json({
+      data: url.endsWith('/features')
+        ? { sections: [] }
+        : { total: 0, reviewed: 0, noIssue: 0, reviewRequired: 0 },
+    })
+  })
+  await exchangeLoginCode('fixture')
+  const owner = getFeatureReviewOwner(11)
+  await owner.run(
+    '승인 중',
+    async () => {
+      throw new FeatureReviewMutationUnknown('불확실')
+    },
+    '',
+  )
+  assert.equal(owner.getSnapshot().phase, 'uncertain')
+  fail = true
+  await owner.refresh()
+  assert.equal(owner.getSnapshot().phase, 'read-error')
+  assert.equal(owner.acknowledge(), false, 'no unlock without a fresh list')
+  fail = false
+  await owner.refresh()
+  assert.equal(owner.getSnapshot().phase, 'uncertain')
+  assert.equal(owner.acknowledge(), true)
+  assert.equal(owner.getSnapshot().phase, 'idle')
+  assert.equal(owner.getSnapshot().notice, null)
+  let sent = 0
+  assert.equal(
+    await owner.run('승인 중', async () => void sent++, '승인했습니다.'),
+    true,
+  )
+  assert.equal(sent, 1)
   assert.equal(owner.getSnapshot().phase, 'idle')
 })
 

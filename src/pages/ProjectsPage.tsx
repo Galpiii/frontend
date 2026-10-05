@@ -1,9 +1,14 @@
-import { useAnalysisStart } from '../analysis/useAnalysisStart'
-import { AiConsentModal } from '../components/AiConsentModal'
+import { useAnalysisStart } from '../features/consent/useAnalysisStart'
+import { AiConsentModal } from '../features/consent/AiConsentModal'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { AppHeader, AppShell } from '../components/layout'
-import { AnalysisStatusBadge } from '../components/AnalysisStatusBadge'
+import { AnalysisStatusBadge } from '../features/projects/AnalysisStatusBadge'
 import {
   Alert,
   Badge,
@@ -19,52 +24,20 @@ import {
   type Tone,
   type ToastMessage,
 } from '../components/ui'
-import { authenticatedFetch, SessionError } from '../auth/session'
-import { API_PATHS, projectPaths, readData } from '../lib/api'
-import { projectAnalysis } from '../analysis/projectAnalysis'
+import { SessionError } from '../features/auth/session'
+import {
+  deleteProject,
+  listProjects,
+  renameProject,
+  type ProjectSummary,
+} from '../features/projects/api'
+import { cn } from '../lib/cn'
+import { projectAnalysis } from '../features/projects/projectAnalysis'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
-
-interface Project {
-  id: number
-  name: string
-  status: string
-  repositoryCount: number
-  hasSpecDocument: boolean
-  updatedAt: string
-  lastAnalysis?: { status?: string } | null
-}
+import { projectKeys } from '../features/projects/keys'
 
 /** A run in one of these states is still working; requesting another is not safe. */
 const RUNNING_ANALYSIS = ['QUEUED', 'RUNNING']
-
-interface ProjectList {
-  projects: Project[]
-  totalPages: number
-}
-
-function isProject(value: unknown): value is Project {
-  if (typeof value !== 'object' || value === null) return false
-  const project = value as Record<string, unknown>
-  return (
-    typeof project.id === 'number' &&
-    typeof project.name === 'string' &&
-    // A status the backend adds later is shown as-is, not treated as invalid.
-    typeof project.status === 'string' &&
-    typeof project.repositoryCount === 'number' &&
-    typeof project.hasSpecDocument === 'boolean' &&
-    typeof project.updatedAt === 'string'
-  )
-}
-
-function isProjectList(value: unknown): value is ProjectList {
-  if (typeof value !== 'object' || value === null) return false
-  const list = value as Record<string, unknown>
-  return (
-    Array.isArray(list.projects) &&
-    list.projects.every(isProject) &&
-    Number.isInteger(list.totalPages)
-  )
-}
 
 let toastSequence = 0
 
@@ -98,18 +71,33 @@ export function ProjectsPage() {
   useDocumentTitle('프로젝트')
   const navigate = useNavigate()
   const location = useLocation()
+  const queryClient = useQueryClient()
   const [page, setPage] = useState(0)
-  const [attempt, setAttempt] = useState(0)
-  const [result, setResult] = useState<ProjectList | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const query = useQuery({
+    queryKey: projectKeys.page(page),
+    queryFn: ({ signal }) => listProjects(page, signal),
+    // The previous page stays (dimmed) while the next one loads.
+    placeholderData: keepPreviousData,
+  })
+  const result = query.data ?? null
+  const loading = query.isPending
+  const changingPage = query.isPlaceholderData
+  const refreshing = query.isRefetching && !changingPage
+  // AuthProvider is told about an expiry by session.ts; this screen is about
+  // to unmount, so it must not flash a request error first.
+  const error =
+    query.isError &&
+    !(query.error instanceof SessionError && query.error.status === 401)
+      ? '프로젝트 목록을 불러오지 못했습니다. 다시 시도해주세요.'
+      : ''
 
-  const [editing, setEditing] = useState<Project | null>(null)
+  const [editing, setEditing] = useState<ProjectSummary | null>(null)
   const [editName, setEditName] = useState('')
   const [editError, setEditError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [removingTarget, setRemovingTarget] = useState<Project | null>(null)
+  const [removingTarget, setRemovingTarget] = useState<ProjectSummary | null>(
+    null,
+  )
   const [removing, setRemoving] = useState(false)
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>(() =>
@@ -128,17 +116,9 @@ export function ProjectsPage() {
       navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, location.state, navigate])
 
-  function reload() {
-    setLoading(true)
-    setError('')
-    setAttempt((value) => value + 1)
-  }
-
   /** Refetches in place: the list stays on screen instead of blanking out. */
-  function refresh() {
-    setRefreshing(true)
-    setError('')
-    setAttempt((value) => value + 1)
+  function reload() {
+    void queryClient.invalidateQueries({ queryKey: projectKeys.lists() })
   }
 
   async function saveName() {
@@ -151,15 +131,7 @@ export function ProjectsPage() {
     setSaving(true)
     setEditError('')
     try {
-      const response = await authenticatedFetch(
-        projectPaths.project(editing.id),
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: trimmed }),
-        },
-      )
-      if (!response.ok) throw new Error('프로젝트 정보를 수정하지 못했습니다.')
+      await renameProject(editing.id, trimmed)
       setEditing(null)
       showToast('프로젝트 정보를 수정했습니다.', 'success')
       reload()
@@ -179,20 +151,13 @@ export function ProjectsPage() {
     if (!removingTarget || removing) return
     setRemoving(true)
     try {
-      const response = await authenticatedFetch(
-        projectPaths.project(removingTarget.id),
-        { method: 'DELETE' },
-      )
-      if (!response.ok) throw new Error('프로젝트를 삭제하지 못했습니다.')
+      await deleteProject(removingTarget.id)
       setRemovingTarget(null)
       showToast('프로젝트를 삭제했습니다.', 'success')
       // Deleting the only row on a later page would otherwise strand the user
       // on a page that no longer exists.
-      if (result?.projects.length === 1 && page > 0) {
-        setLoading(true)
-        setError('')
-        setPage(page - 1)
-      } else reload()
+      if (result?.projects.length === 1 && page > 0) setPage(page - 1)
+      reload()
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       setRemovingTarget(null)
@@ -207,13 +172,13 @@ export function ProjectsPage() {
     }
   }
 
-  async function refreshAnalysis(project: Project) {
+  async function refreshAnalysis(project: ProjectSummary) {
     if (analysis.flow.state.phase !== 'idle') return
     setRefreshingId(project.id)
     try {
       if (!(await analysis.flow.requestConsent())) return
       projectAnalysis.queue(project.id)
-      navigate(`/project/${project.id}`)
+      navigate(`/projects/${project.id}`)
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       showToast('동의 정보를 확인하지 못했습니다.', 'danger')
@@ -222,41 +187,7 @@ export function ProjectsPage() {
     }
   }
 
-  useEffect(() => {
-    const controller = new AbortController()
-    async function loadProjects() {
-      try {
-        const response = await authenticatedFetch(
-          `${API_PATHS.projects}?page=${page}&size=12&sort=UPDATED_AT`,
-          { signal: controller.signal },
-        )
-        if (!response.ok) throw new Error('Project list request failed')
-        const data = await readData(
-          response,
-          isProjectList,
-          'Invalid project list',
-        )
-        if (!controller.signal.aborted) setResult(data)
-      } catch (cause) {
-        if (controller.signal.aborted) return
-        // AuthProvider is told about the expiry by session.ts; this screen
-        // is about to unmount, so it must not flash a request error first.
-        if (cause instanceof SessionError && cause.status === 401) return
-        setError('프로젝트 목록을 불러오지 못했습니다. 다시 시도해주세요.')
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false)
-          setRefreshing(false)
-        }
-      }
-    }
-    void loadProjects()
-    return () => controller.abort()
-  }, [page, attempt])
-
   function changePage(next: number) {
-    setLoading(true)
-    setError('')
     setPage(next)
   }
 
@@ -281,7 +212,7 @@ export function ProjectsPage() {
                   variant="secondary"
                   loading={refreshing}
                   icon={<span aria-hidden="true">⟳</span>}
-                  onClick={refresh}
+                  onClick={() => void query.refetch()}
                 >
                   새로고침
                 </Button>
@@ -307,11 +238,8 @@ export function ProjectsPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => {
-                  setLoading(true)
-                  setError('')
-                  setAttempt((value) => value + 1)
-                }}
+                loading={query.isFetching}
+                onClick={() => void query.refetch()}
               >
                 다시 시도
               </Button>
@@ -332,13 +260,19 @@ export function ProjectsPage() {
           />
         ) : (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div
+              aria-busy={changingPage || undefined}
+              className={cn(
+                'grid gap-4 transition-opacity sm:grid-cols-2 lg:grid-cols-3',
+                changingPage && 'opacity-60',
+              )}
+            >
               {result?.projects.map((project) => (
                 <Card key={project.id} className="relative flex flex-col gap-3">
                   <div className="flex items-start justify-between gap-3">
                     <h2 className="min-w-0 break-words text-[15px] font-extrabold">
                       <Link
-                        to={`/project/${project.id}`}
+                        to={`/projects/${project.id}`}
                         className="after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-primary"
                       >
                         {project.name}

@@ -1,27 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import ts from 'typescript'
+import { loadSources } from './helpers/sources.mjs'
 
 async function load(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'galpi-filters-test-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
-  const source = await readFile(
-    new URL('../src/pages/repositoryFilters.ts', import.meta.url),
-    'utf8',
-  )
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2023,
-      module: ts.ModuleKind.ESNext,
-    },
-  })
-  const file = join(dir, 'repositoryFilters.mjs')
-  await writeFile(file, outputText)
-  return import(pathToFileURL(file).href)
+  const load = await loadSources(t, ['features/repositories/repositoryFilters'])
+  return load('features/repositories/repositoryFilters')
 }
 
 function repo(fullName, extra = {}) {

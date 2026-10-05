@@ -41,7 +41,7 @@ export function EmptyState({
   action?: ReactNode
   icon?: ReactNode
   /** Pick the level that fits the page outline; the size stays the same. */
-  level?: 2 | 3 | 4
+  level?: 1 | 2 | 3 | 4
 }) {
   const Heading = `h${level}` as const
   return (

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Brand } from '../components/layout'
-import { GitHubLoginButton } from '../components/auth/GitHubLoginButton'
-import { ResultPreview } from '../components/landing/ResultPreview'
+import { GitHubLoginButton } from '../features/auth/GitHubLoginButton'
+import { ResultPreview } from '../features/landing/ResultPreview'
 import { API_PATHS, getApiUrl } from '../lib/api'
-import { useAuth } from '../auth/AuthContext'
+import { useAuth } from '../features/auth/AuthContext'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 export function LandingPage() {
