@@ -1,18 +1,12 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
+import { useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Drawer } from '../components/ui'
 import { PrStatusBadge } from '../components/PrStatusBadge'
-import {
-  getPullRequestFeatures,
-  type PullRequestFeatures,
-} from '../lib/featureMatchApi'
-import {
-  changeTypes,
-  failureReasons,
-  getPullRequestDetail,
-  type PullRequestDetail,
-} from '../lib/pullRequestApi'
+import { getPullRequestFeatures } from '../lib/featureMatchApi'
+import { changeTypes, failureReasons } from '../lib/pullRequestApi'
 import { displayDate, githubUrl } from '../lib/projectOverviewApi'
+import { queryKeys } from '../lib/queryKeys'
+import { usePullRequestDetail } from './usePullRequestDetail'
 const relatedFeatureNotices = {
   NO_RUN:
     '아직 기능대조를 실행하지 않았습니다. 기능대조를 실행하면 관련 기능을 확인할 수 있습니다.',
@@ -31,26 +25,21 @@ function RelatedFeatures({
   pullRequestId: number
   repositoryId: number
 }) {
-  const [data, setData] = useState<PullRequestFeatures | null>(null)
-  const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    const controller = new AbortController()
-    getPullRequestFeatures(
+  const query = useQuery({
+    queryKey: queryKeys.pullRequestFeatures(
       projectId,
       pullRequestId,
       repositoryId,
-      controller.signal,
-    )
-      .then((result) => {
-        if (!controller.signal.aborted) setData(result)
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setError('관련 기능을 불러오지 못했습니다.')
-      })
-    return () => controller.abort()
-  }, [projectId, pullRequestId, repositoryId, attempt])
+    ),
+    queryFn: ({ signal }) =>
+      getPullRequestFeatures(projectId, pullRequestId, repositoryId, signal),
+    // One read fans out to every matched feature's detail; reopening the
+    // drawer or returning to the tab reuses it for a while.
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  })
+  const data = query.data ?? null
+  const error = query.isError ? '관련 기능을 불러오지 못했습니다.' : ''
   return (
     <Card>
       <div className="flex items-center justify-between gap-2">
@@ -67,11 +56,8 @@ function RelatedFeatures({
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  setError('')
-                  setData(null)
-                  setAttempt((v) => v + 1)
-                }}
+                loading={query.isFetching}
+                onClick={() => void query.refetch()}
               >
                 다시 조회
               </Button>
@@ -149,32 +135,7 @@ export function PullRequestDetailDrawer({
   repositoryIds: number[]
   onClose: () => void
 }) {
-  const [data, setData] = useState<PullRequestDetail | null>(null)
-  const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
-  const key = repositoryIds.join(',')
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      setError('')
-      setData(null)
-      try {
-        const result = await getPullRequestDetail(id, controller.signal)
-        if (!key.split(',').includes(String(result.repository.id)))
-          throw new Error('이 프로젝트에 연결된 PR이 아닙니다.')
-        if (!controller.signal.aborted) setData(result)
-      } catch (cause) {
-        if (!controller.signal.aborted)
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : 'PR 상세를 불러오지 못했습니다.',
-          )
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [id, key, attempt])
+  const { data, error, query } = usePullRequestDetail(id, repositoryIds)
   const url = data && githubUrl(data.htmlUrl)
   return (
     <Drawer
@@ -190,7 +151,8 @@ export function PullRequestDetailDrawer({
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => setAttempt((v) => v + 1)}
+              loading={query.isFetching}
+              onClick={() => void query.refetch()}
             >
               다시 조회
             </Button>

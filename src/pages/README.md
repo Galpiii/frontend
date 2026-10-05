@@ -52,6 +52,14 @@ The frontend cannot prevent the initial callback URL from reaching the server, i
 
 Use the same local frontend/backend hostname where cookies require same-site requests (for example `localhost:5173` and `localhost:8080`). Configure backend CORS allowed origins, callback URLs, frontend redirect, and cookie Secure/SameSite settings for deployment. Do not put secrets or tokens into frontend environment variables or browser persistent storage.
 
+## Server reads
+
+Server reads go through TanStack Query (`lib/queryClient.ts`, keys in `lib/queryKeys.ts`). Each screen declares a query instead of managing `AbortController`s, attempt counters and timers itself: aborting on unmount or key change, deduplication, and keeping data on screen while the same key is refetched come from the library. Paginated lists keep the previous page (dimmed) while the next one loads. A read that fails is retried once, except an expired session, a missing project or a 4xx feature-match answer.
+
+Everything read for one project lives under `['project', id]`, so a screen's refresh button invalidates that prefix and every part re-reads without its own reload wiring. Feature-match reads live under `['project', id, 'feature-match']`; connecting or unlinking a PR invalidates that prefix, and the evidence panel stays mounted while it refetches. The project overview refetches every 15 seconds and the matched-feature stat every 5 seconds only while a match is running; both pause in a hidden tab.
+
+Mutations are not queries. The owners in `analysis/` still decide what may be sent and keep their locks; they never replay a request whose outcome is unknown. Their own status reads (the project-analysis store and the feature-match owner) are repeated with `lib/usePolling.ts`, which pauses in a hidden tab and reads once when the tab becomes visible again. The feature-review owner writes its reconciliation reads into the review queries' cache (`lib/featureReviewQueries.ts`), so the screen shows the response that confirmed a mutation instead of requesting it again. It reads directly rather than through `fetchQuery`, because a screen unmounting mid-read cancels a cached fetch, and a cancelled fetch resolves with the old data.
+
 ## Verification
 
 `node --test tests/auth.test.mjs` tests the actual transpiled auth modules with mocked fetch responses: URL cleanup, one-time exchange, bearer attachment, invalid codes, refresh deduplication/CSRF header, unauthenticated restoration, request timeouts alongside caller aborts, and session-expiry notification. `npm run build` and `npm run lint` check the application.

@@ -7,6 +7,11 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { Link, useSearchParams } from 'react-router'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { getMatchOwner } from '../analysis/featureMatch'
 import {
   Alert,
@@ -28,17 +33,14 @@ import {
   getUnmatchedPrs,
   MatchApiError,
   MatchOutcomeUnknown,
-  type MatchDetail,
   type MatchFilter,
-  type MatchResults,
-  type UnmatchedPage,
 } from '../lib/featureMatchApi'
 import type { ProjectDetail } from '../lib/projectApi'
-import { getPrPage, type PrPage } from '../lib/projectOverviewApi'
-import {
-  getPullRequestDetail,
-  type PullRequestDetail,
-} from '../lib/pullRequestApi'
+import { getPrPage } from '../lib/projectOverviewApi'
+import { cn } from '../lib/cn'
+import { queryKeys } from '../lib/queryKeys'
+import { usePolling } from '../lib/usePolling'
+import { usePullRequestDetail } from './usePullRequestDetail'
 
 const Markdown = lazy(() =>
   import('../components/Markdown').then((module) => ({
@@ -51,6 +53,12 @@ const filters: { value: MatchFilter; label: string }[] = [
   { value: 'EVIDENCE_FOUND', label: '관련 PR 있음' },
   { value: 'ATTENTION_REQUIRED', label: '확인 필요' },
 ]
+
+/** A read answered for a different run than the one on screen. */
+class MatchRunChanged extends Error {}
+
+const settledRun = (status?: string) =>
+  status === 'COMPLETED' || status === 'PARTIALLY_COMPLETED'
 
 function githubUrl(value: string) {
   try {
@@ -72,28 +80,7 @@ function EmbeddedPrDetail({
   repositoryIds: number[]
   onBack: () => void
 }) {
-  const [detail, setDetail] = useState<PullRequestDetail | null>(null)
-  const [error, setError] = useState('')
-  const [reload, setReload] = useState(0)
-  const repositoryKey = repositoryIds.join(',')
-  useEffect(() => {
-    const controller = new AbortController()
-    void getPullRequestDetail(id, controller.signal)
-      .then((data) => {
-        if (controller.signal.aborted) return
-        if (!repositoryKey.split(',').includes(String(data.repository.id))) {
-          setError('이 프로젝트에 연결된 PR이 아닙니다.')
-          return
-        }
-        setDetail(data)
-        setError('')
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setError('PR 상세를 불러오지 못했습니다.')
-      })
-    return () => controller.abort()
-  }, [id, repositoryKey, reload])
+  const { data: detail, error, query } = usePullRequestDetail(id, repositoryIds)
   return (
     <section
       className="min-w-0 overflow-hidden rounded-[14px] border border-line bg-surface"
@@ -124,10 +111,8 @@ function EmbeddedPrDetail({
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  setError('')
-                  setReload((value) => value + 1)
-                }}
+                loading={query.isFetching}
+                onClick={() => void query.refetch()}
               >
                 다시 조회
               </Button>
@@ -226,40 +211,15 @@ function PrPicker({
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
-  const [response, setResponse] = useState<{
-    key: string
-    data: PrPage
-  } | null>(null)
-  const [error, setError] = useState('')
   const [selected, setSelected] = useState<Set<number>>(() => new Set())
-  const [retry, setRetry] = useState(0)
-  const requestKey = JSON.stringify([
-    projectId,
-    repositoryId,
-    query,
-    page,
-    retry,
-  ])
-  const result = response?.key === requestKey ? response.data : null
-  useEffect(() => {
-    const controller = new AbortController()
-    void getPrPage(
-      projectId,
-      { repositoryId, q: query || undefined, page, size: 30 },
-      controller.signal,
-    )
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          setResponse({ key: requestKey, data })
-          setError('')
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setError('PR 목록을 불러오지 못했습니다.')
-      })
-    return () => controller.abort()
-  }, [projectId, repositoryId, query, page, requestKey])
+  const options = { repositoryId, q: query || undefined, page, size: 30 }
+  const list = useQuery({
+    queryKey: queryKeys.pullRequests(projectId, options),
+    queryFn: ({ signal }) => getPrPage(projectId, options, signal),
+    placeholderData: keepPreviousData,
+  })
+  const result = list.data ?? null
+  const error = list.isError ? 'PR 목록을 불러오지 못했습니다.' : ''
   const toggle = (id: number) =>
     setSelected((current) => {
       const next = new Set(current)
@@ -345,10 +305,8 @@ function PrPicker({
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  setError('')
-                  setRetry((value) => value + 1)
-                }}
+                loading={list.isFetching}
+                onClick={() => void list.refetch()}
               >
                 다시 조회
               </Button>
@@ -368,7 +326,13 @@ function PrPicker({
         {result?.pullRequests.length === 0 && (
           <p className="text-[13px] text-muted">조건에 맞는 PR이 없습니다.</p>
         )}
-        <div className="max-h-[45dvh] overflow-y-auto rounded-xl border border-line">
+        <div
+          aria-busy={list.isPlaceholderData || undefined}
+          className={cn(
+            'max-h-[45dvh] overflow-y-auto rounded-xl border border-line transition-opacity',
+            list.isPlaceholderData && 'opacity-60',
+          )}
+        >
           {result?.pullRequests.map((pr) => {
             const linked = linkedIds.has(pr.id)
             return (
@@ -435,48 +399,48 @@ function EvidencePanel({
   runId,
   projectId,
   repositories,
-  onChanged,
 }: {
   featureId: number
   runId: number
   projectId: number
   repositories: ProjectDetail['repositories']
-  onChanged: () => void
 }) {
-  const [detail, setDetail] = useState<MatchDetail | null>(null)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
+  const detailQuery = useQuery({
+    queryKey: queryKeys.matchDetail(projectId, runId, featureId),
+    queryFn: async ({ signal }) => {
+      const data = await getMatchDetail(featureId, signal)
+      if (data.featureMatchRunId !== runId) throw new MatchRunChanged()
+      return data
+    },
+  })
+  const detail = detailQuery.data ?? null
+  const error = !detailQuery.isError
+    ? ''
+    : detailQuery.error instanceof MatchRunChanged
+      ? '대조 결과가 변경되었습니다. 목록을 다시 확인해주세요.'
+      : '기능별 근거를 불러오지 못했습니다.'
+  // Connections changed: the list counts, this detail and the unmatched PRs
+  // are all re-read. Data already on screen stays until each read lands.
+  const refreshMatch = () =>
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.featureMatch(projectId),
+    })
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [uncertain, setUncertain] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [selectedPrId, setSelectedPrId] = useState<number | null>(null)
-  const [reload, setReload] = useState(0)
-  useEffect(() => {
-    const controller = new AbortController()
-    void getMatchDetail(featureId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) {
-          if (data.featureMatchRunId !== runId)
-            setError('대조 결과가 변경되었습니다. 목록을 다시 확인해주세요.')
-          else setDetail(data)
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setError('기능별 근거를 불러오지 못했습니다.')
-      })
-    return () => controller.abort()
-  }, [featureId, runId, reload])
+  // A stale detail must not offer an unlink for a match that may be gone.
+  const stale = detailQuery.isFetching
   const change = async (action: () => Promise<unknown>) => {
     if (busy || uncertain) return
     setBusy(true)
     setNotice('')
     try {
       await action()
-      setDetail(null)
       setLinkOpen(false)
-      setReload((value) => value + 1)
-      onChanged()
+      refreshMatch()
     } catch (caught) {
       if (caught instanceof MatchOutcomeUnknown) {
         setUncertain(true)
@@ -489,8 +453,7 @@ function EvidencePanel({
       } else {
         setNotice('PR 연결을 변경하지 못했습니다. 최신 결과를 확인해주세요.')
       }
-      setReload((value) => value + 1)
-      onChanged()
+      refreshMatch()
     } finally {
       setBusy(false)
     }
@@ -530,10 +493,8 @@ function EvidencePanel({
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  setError('')
-                  setReload((value) => value + 1)
-                }}
+                loading={detailQuery.isFetching}
+                onClick={() => void detailQuery.refetch()}
               >
                 다시 불러오기
               </Button>
@@ -579,7 +540,7 @@ function EvidencePanel({
                 <Button
                   size="sm"
                   variant="secondary"
-                  disabled={busy || uncertain}
+                  disabled={busy || uncertain || stale}
                   onClick={() => setLinkOpen(true)}
                 >
                   이 기능에 PR 직접 연결
@@ -669,7 +630,7 @@ function EvidencePanel({
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={busy || uncertain}
+                            disabled={busy || uncertain || stale}
                             onClick={() =>
                               void change(() =>
                                 disconnectPullRequest(match.matchId),
@@ -718,35 +679,27 @@ function EvidencePanel({
 function UnmatchedModal({
   projectId,
   runId,
-  reload = 0,
   onClose,
 }: {
   projectId: number
   runId: number
-  reload?: number
   onClose: () => void
 }) {
   const [page, setPage] = useState(0)
-  const [result, setResult] = useState<UnmatchedPage | null>(null)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    const controller = new AbortController()
-    void getUnmatchedPrs(projectId, page, controller.signal)
-      .then((data) => {
-        if (controller.signal.aborted) return
-        if (data.featureMatchRunId !== runId)
-          setError('대조 결과가 변경되었습니다. 다시 확인해주세요.')
-        else {
-          setError('')
-          setResult(data)
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setError('연결되지 않은 PR을 불러오지 못했습니다.')
-      })
-    return () => controller.abort()
-  }, [projectId, runId, page, reload])
+  const query = useQuery({
+    queryKey: queryKeys.unmatched(projectId, runId, page),
+    queryFn: async ({ signal }) => {
+      const data = await getUnmatchedPrs(projectId, page, signal)
+      if (data.featureMatchRunId !== runId) throw new MatchRunChanged()
+      return data
+    },
+  })
+  const result = query.data ?? null
+  const error = !query.isError
+    ? ''
+    : query.error instanceof MatchRunChanged
+      ? '대조 결과가 변경되었습니다. 다시 확인해주세요.'
+      : '연결되지 않은 PR을 불러오지 못했습니다.'
   return (
     <Modal
       open
@@ -804,10 +757,7 @@ function UnmatchedModal({
               size="sm"
               variant="secondary"
               disabled={page === 0}
-              onClick={() => {
-                setResult(null)
-                setPage((p) => p - 1)
-              }}
+              onClick={() => setPage((p) => p - 1)}
             >
               이전
             </Button>
@@ -818,10 +768,7 @@ function UnmatchedModal({
               size="sm"
               variant="secondary"
               disabled={page + 1 >= result.totalPages}
-              onClick={() => {
-                setResult(null)
-                setPage((p) => p + 1)
-              }}
+              onClick={() => setPage((p) => p + 1)}
             >
               다음
             </Button>
@@ -850,27 +797,13 @@ export function ProjectFeatureMatch({
   const repoId = Number(params.get('matchRepo')) || undefined
   const q = params.get('matchQ') ?? ''
   const detailId = Number(params.get('matchFeature')) || null
+  const queryClient = useQueryClient()
   const [search, setSearch] = useState(q)
-  const [resultResponse, setResultResponse] = useState<{
-    key: string
-    view: string
-    data: MatchResults
-  } | null>(null)
-  const [resultError, setResultError] = useState<{
-    key: string
-    message: string
-  } | null>(null)
-  const [allResponse, setAllResponse] = useState<{
-    key: string
-    view: string
-    data: MatchResults
-  } | null>(null)
   const [actionError, setActionError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [unreviewed, setUnreviewed] = useState<number | null>(null)
   const [starting, setStarting] = useState(false)
   const [showUnmatched, setShowUnmatched] = useState(false)
-  const [localRevision, setLocalRevision] = useState(0)
   const evidenceRef = useRef<HTMLDivElement>(null)
   const runId = state.run?.featureMatchRunId
   const runStatus = state.run?.status
@@ -878,110 +811,67 @@ export function ProjectFeatureMatch({
     state.run &&
     state.run.specDocumentId !== project.specDocument?.specDocumentId,
   )
-  // A view is what the user asked to see; a request is one read of it. A
-  // reload of the same view (localRevision) keeps the previous results on
-  // screen, so the evidence panel and its notices survive a PR (dis)connect.
-  const allView = JSON.stringify([
-    project.id,
-    runId,
-    runStatus,
-    project.specDocument?.specDocumentId,
-  ])
-  const view = JSON.stringify([allView, filter, repoId, q])
-  const requestKey = JSON.stringify([view, localRevision])
-  const allKey = JSON.stringify([allView, localRevision])
-  const results = resultResponse?.view === view ? resultResponse.data : null
-  const reloadingResults =
-    results !== null && resultResponse?.key !== requestKey
-  const allResults =
-    filter === 'ALL' && !repoId && !q
-      ? results
-      : allResponse?.view === allView
-        ? allResponse.data
-        : null
-  const error = resultError?.key === requestKey ? resultError.message : ''
+  const readable = !staleSpec && !!runId && settledRun(runStatus)
+  const unfiltered = filter === 'ALL' && !repoId && !q
+  const resultsFor = (
+    filter: MatchFilter,
+    repositoryId?: number,
+    search?: string,
+  ) => ({
+    queryKey: queryKeys.matchResults(
+      project.id,
+      runId ?? 0,
+      runStatus ?? '',
+      filter,
+      repositoryId,
+      search,
+    ),
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const data = await getMatchResults(
+        project.id,
+        filter,
+        repositoryId,
+        search,
+        signal,
+      )
+      if (data.featureMatchRunId !== runId) throw new MatchRunChanged()
+      return data
+    },
+  })
+  // A refetch of the same view keeps its results on screen, so the evidence
+  // panel and its notices survive a PR (dis)connect; a new view starts empty.
+  const resultsQuery = useQuery({
+    ...resultsFor(filter, repoId, q),
+    enabled: readable,
+  })
+  // Summary counts always describe the whole run, whatever the filter.
+  const allQuery = useQuery({
+    ...resultsFor('ALL', undefined, ''),
+    enabled: readable && !unfiltered,
+  })
+  const results = readable ? (resultsQuery.data ?? null) : null
+  const allResults = unfiltered ? results : (allQuery.data ?? null)
+  const error = !resultsQuery.isError
+    ? ''
+    : resultsQuery.error instanceof MatchRunChanged
+      ? '대조 실행이 변경되었습니다. 다시 확인해주세요.'
+      : resultsQuery.error instanceof MatchApiError &&
+          resultsQuery.error.code === 'FEATURE-MATCH-010'
+        ? '명세서나 저장소가 변경되어 결과가 오래되었습니다. 최신 상태를 확인해주세요.'
+        : '기능대조 결과를 불러오지 못했습니다.'
+  const reloadingResults = resultsQuery.isRefetching
+  const refreshResults = () =>
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.featureMatch(project.id),
+    })
   const latestParams = useRef(params)
   useEffect(() => {
     latestParams.current = params
   }, [params])
   useEffect(() => {
     void owner.refresh()
-    const timer = window.setInterval(() => void owner.refresh(), 5000)
-    return () => window.clearInterval(timer)
   }, [owner])
-  useEffect(() => {
-    if (
-      staleSpec ||
-      !runId ||
-      !['COMPLETED', 'PARTIALLY_COMPLETED'].includes(runStatus ?? '')
-    )
-      return
-    const controller = new AbortController()
-    void getMatchResults(project.id, filter, repoId, q, controller.signal)
-      .then((data) => {
-        if (controller.signal.aborted) return
-        if (data.featureMatchRunId !== runId) {
-          setResultError({
-            key: requestKey,
-            message: '대조 실행이 변경되었습니다. 다시 확인해주세요.',
-          })
-        } else {
-          setResultResponse({ key: requestKey, view, data })
-          setResultError(null)
-        }
-      })
-      .catch((caught) => {
-        if (controller.signal.aborted) return
-        setResultError({
-          key: requestKey,
-          message:
-            caught instanceof MatchApiError &&
-            caught.code === 'FEATURE-MATCH-010'
-              ? '명세서나 저장소가 변경되어 결과가 오래되었습니다. 최신 상태를 확인해주세요.'
-              : '기능대조 결과를 불러오지 못했습니다.',
-        })
-      })
-    return () => controller.abort()
-  }, [
-    project.id,
-    runId,
-    runStatus,
-    staleSpec,
-    localRevision,
-    filter,
-    repoId,
-    q,
-    requestKey,
-    view,
-  ])
-  useEffect(() => {
-    if (
-      staleSpec ||
-      !runId ||
-      !['COMPLETED', 'PARTIALLY_COMPLETED'].includes(runStatus ?? '') ||
-      (filter === 'ALL' && !repoId && !q)
-    )
-      return
-    const controller = new AbortController()
-    void getMatchResults(project.id, 'ALL', undefined, '', controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted && data.featureMatchRunId === runId)
-          setAllResponse({ key: allKey, view: allView, data })
-      })
-      .catch(() => {})
-    return () => controller.abort()
-  }, [
-    project.id,
-    runId,
-    runStatus,
-    staleSpec,
-    localRevision,
-    filter,
-    repoId,
-    q,
-    allKey,
-    allView,
-  ])
+  usePolling(() => void owner.refresh(), 5000)
   const update = (patch: Record<string, string>) => {
     const next = new URLSearchParams(latestParams.current)
     Object.entries(patch).forEach(([key, value]) =>
@@ -1165,7 +1055,7 @@ export function ProjectFeatureMatch({
                     size="sm"
                     variant="secondary"
                     onClick={() => {
-                      setLocalRevision((value) => value + 1)
+                      refreshResults()
                       void owner.refresh()
                     }}
                   >
@@ -1287,7 +1177,7 @@ export function ProjectFeatureMatch({
                     size="sm"
                     variant="secondary"
                     loading={reloadingResults}
-                    onClick={() => setLocalRevision((value) => value + 1)}
+                    onClick={refreshResults}
                   >
                     결과 새로고침
                   </Button>
@@ -1417,7 +1307,6 @@ export function ProjectFeatureMatch({
                       runId={run.featureMatchRunId}
                       projectId={project.id}
                       repositories={project.repositories}
-                      onChanged={() => setLocalRevision((value) => value + 1)}
                     />
                   </div>
                 </div>
@@ -1432,7 +1321,6 @@ export function ProjectFeatureMatch({
                 key={run.featureMatchRunId}
                 projectId={project.id}
                 runId={run.featureMatchRunId}
-                reload={localRevision}
                 onClose={() => setShowUnmatched(false)}
               />
             )}

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   Alert,
   Badge,
@@ -15,9 +16,10 @@ import type { ProjectDetail } from '../lib/projectApi'
 import {
   displayDate,
   getPrPage,
-  type PrPage,
   type loadOverview,
 } from '../lib/projectOverviewApi'
+import { cn } from '../lib/cn'
+import { queryKeys } from '../lib/queryKeys'
 import { AnalysisManagementDrawer } from './AnalysisManagementDrawer'
 import { PullRequestDetailDrawer } from './PullRequestDetailDrawer'
 
@@ -44,9 +46,23 @@ export function ProjectPullRequests({
   const page = Math.max(0, Number(params.get('page')) || 0)
   const selectedPr = Number(params.get('pr'))
   const manage = params.get('panel') === 'analysis'
-  const [attempt, setAttempt] = useState(0)
-  const [result, setResult] = useState<PrPage | null>(null)
-  const [error, setError] = useState('')
+  const options = {
+    repositoryId: repository ? Number(repository) : undefined,
+    analysisStatus: status || undefined,
+    authorLogin: author || undefined,
+    q: query || undefined,
+    sort,
+    page,
+    size: 20,
+  }
+  const list = useQuery({
+    queryKey: queryKeys.pullRequests(project.id, options),
+    queryFn: ({ signal }) => getPrPage(project.id, options, signal),
+    // The current rows stay (dimmed) while a new filter or page loads.
+    placeholderData: keepPreviousData,
+  })
+  const result = list.data ?? null
+  const error = list.isError ? 'PR 목록을 불러오지 못했습니다.' : ''
   function update(patch: Record<string, string>, resetPage = true) {
     const next = new URLSearchParams(latestParams.current)
     if (resetPage) next.delete('page')
@@ -57,38 +73,8 @@ export function ProjectPullRequests({
     latestParams.current = next
     setParams(next)
   }
-  const reload = () => {
-    setAttempt((v) => v + 1)
-    refresh()
-  }
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      setResult(null)
-      setError('')
-      try {
-        const list = await getPrPage(
-          project.id,
-          {
-            repositoryId: repository ? Number(repository) : undefined,
-            analysisStatus: status || undefined,
-            authorLogin: author || undefined,
-            q: query || undefined,
-            sort,
-            page,
-            size: 20,
-          },
-          controller.signal,
-        )
-        if (!controller.signal.aborted) setResult(list)
-      } catch {
-        if (!controller.signal.aborted)
-          setError('PR 목록을 불러오지 못했습니다.')
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [project.id, repository, status, author, query, sort, page, attempt])
+  // Invalidates every read for the project, this list included.
+  const reload = refresh
   const groups = new Map<number, NonNullable<typeof result>['pullRequests']>()
   result?.pullRequests.forEach((pr) =>
     groups.set(pr.repository.id, [...(groups.get(pr.repository.id) ?? []), pr]),
@@ -209,7 +195,12 @@ export function ProjectPullRequests({
         <p className="text-xs text-muted">
           기준 · Merge됨 PR · 각 저장소 기본 브랜치 · 전체 기간
         </p>
-        <Button size="sm" variant="secondary" onClick={reload}>
+        <Button
+          size="sm"
+          variant="secondary"
+          loading={list.isRefetching && !list.isPlaceholderData}
+          onClick={reload}
+        >
           새로고침
         </Button>
       </div>
@@ -229,7 +220,13 @@ export function ProjectPullRequests({
           PR 목록을 불러오는 중입니다…
         </p>
       ) : (
-        <>
+        <div
+          aria-busy={list.isPlaceholderData || undefined}
+          className={cn(
+            'space-y-4 transition-opacity',
+            list.isPlaceholderData && 'opacity-60',
+          )}
+        >
           {result.pullRequests.length === 0 ? (
             <Card>조건에 맞는 PR이 없습니다.</Card>
           ) : (
@@ -316,7 +313,7 @@ export function ProjectPullRequests({
               </Button>
             </nav>
           )}
-        </>
+        </div>
       )}
       {manage && (
         <AnalysisManagementDrawer

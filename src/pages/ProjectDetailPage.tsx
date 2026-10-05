@@ -22,6 +22,7 @@ import {
   StatCard,
 } from '../components/ui'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
+import { usePolling } from '../lib/usePolling'
 import { NewProjectPage } from './NewProjectPage'
 import { resumeOnboardingStep } from './onboardingSteps'
 
@@ -79,10 +80,7 @@ function ProjectHome({ projectId }: { projectId: number }) {
         : 'home'
   const overview = useProjectOverview(projectId, project)
   const matchedFeatures = matchedFeatureStat(
-    useMatchedFeatures(
-      tab === 'home' ? project : undefined,
-      overview.refreshKey,
-    ),
+    useMatchedFeatures(tab === 'home' ? project : undefined),
   )
   const openSpec = () => navigate(`/projects/${projectId}?tab=match`)
   useDocumentTitle(
@@ -92,15 +90,9 @@ function ProjectHome({ projectId }: { projectId: number }) {
     void projectAnalysis.consume(projectId)
     void projectAnalysis.refresh(projectId)
   }, [projectId])
-  useEffect(() => {
-    // A 404 will not change by asking again every few seconds.
-    if (notFound) return
-    // Only GETs repeat. Navigation/unmount never aborts a submitted mutation.
-    const timer = window.setInterval(() => {
-      void projectAnalysis.refresh(projectId)
-    }, 5000)
-    return () => window.clearInterval(timer)
-  }, [projectId, notFound])
+  // Only GETs repeat; navigation/unmount never aborts a submitted mutation.
+  // A 404 will not change by asking again every few seconds.
+  usePolling(() => void projectAnalysis.refresh(projectId), 5000, !notFound)
 
   if (notFound)
     return (

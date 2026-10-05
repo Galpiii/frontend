@@ -2,6 +2,11 @@ import { useAnalysisStart } from '../analysis/useAnalysisStart'
 import { AiConsentModal } from '../components/AiConsentModal'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { AppHeader, AppShell } from '../components/layout'
 import { AnalysisStatusBadge } from '../components/AnalysisStatusBadge'
 import {
@@ -21,8 +26,10 @@ import {
 } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
+import { cn } from '../lib/cn'
 import { projectAnalysis } from '../analysis/projectAnalysis'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
+import { queryKeys } from '../lib/queryKeys'
 
 interface Project {
   id: number
@@ -87,6 +94,15 @@ function arrivingToasts(state: unknown): ToastMessage[] {
   })
 }
 
+async function loadProjects(page: number, signal: AbortSignal) {
+  const response = await authenticatedFetch(
+    `${API_PATHS.projects}?page=${page}&size=12&sort=UPDATED_AT`,
+    { signal },
+  )
+  if (!response.ok) throw new Error('Project list request failed')
+  return readData(response, isProjectList, 'Invalid project list')
+}
+
 /** An unparseable timestamp must not render as "Invalid Date". */
 function formatDate(value: string) {
   const date = new Date(value)
@@ -98,12 +114,25 @@ export function ProjectsPage() {
   useDocumentTitle('프로젝트')
   const navigate = useNavigate()
   const location = useLocation()
+  const queryClient = useQueryClient()
   const [page, setPage] = useState(0)
-  const [attempt, setAttempt] = useState(0)
-  const [result, setResult] = useState<ProjectList | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const query = useQuery({
+    queryKey: queryKeys.projectPage(page),
+    queryFn: ({ signal }) => loadProjects(page, signal),
+    // The previous page stays (dimmed) while the next one loads.
+    placeholderData: keepPreviousData,
+  })
+  const result = query.data ?? null
+  const loading = query.isPending
+  const changingPage = query.isPlaceholderData
+  const refreshing = query.isRefetching && !changingPage
+  // AuthProvider is told about an expiry by session.ts; this screen is about
+  // to unmount, so it must not flash a request error first.
+  const error =
+    query.isError &&
+    !(query.error instanceof SessionError && query.error.status === 401)
+      ? '프로젝트 목록을 불러오지 못했습니다. 다시 시도해주세요.'
+      : ''
 
   const [editing, setEditing] = useState<Project | null>(null)
   const [editName, setEditName] = useState('')
@@ -128,17 +157,9 @@ export function ProjectsPage() {
       navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, location.state, navigate])
 
-  function reload() {
-    setLoading(true)
-    setError('')
-    setAttempt((value) => value + 1)
-  }
-
   /** Refetches in place: the list stays on screen instead of blanking out. */
-  function refresh() {
-    setRefreshing(true)
-    setError('')
-    setAttempt((value) => value + 1)
+  function reload() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.projectList() })
   }
 
   async function saveName() {
@@ -188,11 +209,8 @@ export function ProjectsPage() {
       showToast('프로젝트를 삭제했습니다.', 'success')
       // Deleting the only row on a later page would otherwise strand the user
       // on a page that no longer exists.
-      if (result?.projects.length === 1 && page > 0) {
-        setLoading(true)
-        setError('')
-        setPage(page - 1)
-      } else reload()
+      if (result?.projects.length === 1 && page > 0) setPage(page - 1)
+      reload()
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       setRemovingTarget(null)
@@ -222,41 +240,7 @@ export function ProjectsPage() {
     }
   }
 
-  useEffect(() => {
-    const controller = new AbortController()
-    async function loadProjects() {
-      try {
-        const response = await authenticatedFetch(
-          `${API_PATHS.projects}?page=${page}&size=12&sort=UPDATED_AT`,
-          { signal: controller.signal },
-        )
-        if (!response.ok) throw new Error('Project list request failed')
-        const data = await readData(
-          response,
-          isProjectList,
-          'Invalid project list',
-        )
-        if (!controller.signal.aborted) setResult(data)
-      } catch (cause) {
-        if (controller.signal.aborted) return
-        // AuthProvider is told about the expiry by session.ts; this screen
-        // is about to unmount, so it must not flash a request error first.
-        if (cause instanceof SessionError && cause.status === 401) return
-        setError('프로젝트 목록을 불러오지 못했습니다. 다시 시도해주세요.')
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false)
-          setRefreshing(false)
-        }
-      }
-    }
-    void loadProjects()
-    return () => controller.abort()
-  }, [page, attempt])
-
   function changePage(next: number) {
-    setLoading(true)
-    setError('')
     setPage(next)
   }
 
@@ -281,7 +265,7 @@ export function ProjectsPage() {
                   variant="secondary"
                   loading={refreshing}
                   icon={<span aria-hidden="true">⟳</span>}
-                  onClick={refresh}
+                  onClick={() => void query.refetch()}
                 >
                   새로고침
                 </Button>
@@ -307,11 +291,8 @@ export function ProjectsPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => {
-                  setLoading(true)
-                  setError('')
-                  setAttempt((value) => value + 1)
-                }}
+                loading={query.isFetching}
+                onClick={() => void query.refetch()}
               >
                 다시 시도
               </Button>
@@ -332,7 +313,13 @@ export function ProjectsPage() {
           />
         ) : (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div
+              aria-busy={changingPage || undefined}
+              className={cn(
+                'grid gap-4 transition-opacity sm:grid-cols-2 lg:grid-cols-3',
+                changingPage && 'opacity-60',
+              )}
+            >
               {result?.projects.map((project) => (
                 <Card key={project.id} className="relative flex flex-col gap-3">
                   <div className="flex items-start justify-between gap-3">

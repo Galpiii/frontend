@@ -1,51 +1,46 @@
-import { useEffect, useState } from 'react'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { loadOverview } from '../lib/projectOverviewApi'
 import type { ProjectDetail } from '../lib/projectApi'
+import { queryKeys } from '../lib/queryKeys'
 
 export function useProjectOverview(projectId: number, project?: ProjectDetail) {
-  const [data, setData] = useState<Awaited<
-    ReturnType<typeof loadOverview>
-  > | null>(null)
-  const [attempt, setAttempt] = useState(0)
-  const [loading, setLoading] = useState(false)
+  const queryClient = useQueryClient()
   const repositoryKey = project?.repositories
     .map((r) => r.repositoryId)
     .join(',')
   const runId = project?.lastAnalysis?.analysisRunId
   const runStatus = project?.lastAnalysis?.status
-  useEffect(() => {
-    if (repositoryKey === undefined) return
-    const controller = new AbortController()
-    let timer: number | undefined
-    async function load() {
-      setLoading(true)
-      try {
-        const result = await loadOverview(
-          projectId,
-          repositoryKey ? repositoryKey.split(',').map(Number) : [],
-          runId,
-          controller.signal,
-        )
-        if (!controller.signal.aborted) setData(result)
-      } catch {
-        if (!controller.signal.aborted) setData(null)
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false)
-          timer = window.setTimeout(() => void load(), 15000)
-        }
-      }
-    }
-    void load()
-    return () => {
-      controller.abort()
-      window.clearTimeout(timer)
-    }
-  }, [projectId, repositoryKey, runId, runStatus, attempt])
+  const query = useQuery({
+    queryKey: queryKeys.overview(
+      projectId,
+      repositoryKey ?? '',
+      runId,
+      runStatus,
+    ),
+    queryFn: ({ signal }) =>
+      loadOverview(
+        projectId,
+        repositoryKey ? repositoryKey.split(',').map(Number) : [],
+        runId,
+        signal,
+      ),
+    enabled: repositoryKey !== undefined,
+    // A new run or repository set keeps the last numbers on screen until the
+    // new read lands, instead of blanking every card to "—".
+    placeholderData: keepPreviousData,
+    refetchInterval: 15_000,
+  })
   return {
-    data,
-    loading,
-    refreshKey: attempt,
-    refresh: () => setAttempt((v) => v + 1),
+    data: query.data ?? null,
+    loading: query.isFetching,
+    /** Re-reads everything shown for this project, not only the overview. */
+    refresh: () =>
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.project(projectId),
+      }),
   }
 }

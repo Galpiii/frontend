@@ -1,6 +1,7 @@
 import { useAnalysisStart } from '../analysis/useAnalysisStart'
 import { AiConsentModal } from '../components/AiConsentModal'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   Link,
   Navigate,
@@ -27,6 +28,7 @@ import { authenticatedFetch, SessionError } from '../auth/session'
 import { API_PATHS, projectPaths, readData } from '../lib/api'
 import { projectAnalysis } from '../analysis/projectAnalysis'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
+import { queryKeys } from '../lib/queryKeys'
 import { ONBOARDING_STEPS } from './onboardingSteps'
 import {
   filterRepositories,
@@ -164,6 +166,38 @@ function resolveMessage(status: number) {
   return '저장소를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.'
 }
 
+/** Flattens installations; account type lives on the installation. */
+async function loadRepositories(projectId: number, signal: AbortSignal) {
+  const search = new URLSearchParams({ projectId: String(projectId) })
+  const response = await authenticatedFetch(
+    `${API_PATHS.githubRepositories}?${search}`,
+    { signal },
+  )
+  if (!response.ok) throw new Error('Repository request failed')
+  const data = await readData(
+    response,
+    isSelectableRepositories,
+    'Invalid repository list',
+  )
+  return {
+    rows: data.installations.flatMap((group) =>
+      group.repositories.map((repo): RepositoryRow => ({
+        ...repo,
+        accountLogin: group.installation?.accountLogin ?? repo.owner,
+        // GitHub's own value is "Organization"; anything else, including a
+        // missing field, is treated as a personal account.
+        organization: group.installation?.accountType === 'Organization',
+      })),
+    ),
+    failures: data.failedInstallations ?? [],
+    // GitHub caps what one request can return and there is no way to page for
+    // the rest, so a partial list has to say so; filtering would hide the gap.
+    truncated:
+      data.truncated === true ||
+      data.installations.some((it) => it.truncated === true),
+  }
+}
+
 export function ConnectReposPage() {
   useDocumentTitle('저장소 연결')
   const navigate = useNavigate()
@@ -173,16 +207,48 @@ export function ConnectReposPage() {
   const id = Number(projectId)
   const validId = Number.isInteger(id) && id > 0
 
-  const [repositories, setRepositories] = useState<RepositoryRow[] | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
-  const [attempt, setAttempt] = useState(0)
-  const [failures, setFailures] = useState<FailedInstallation[]>([])
-  // GitHub caps what one request can return and there is no way to page for the
-  // rest, so a partial list has to say so; filtering here would hide the gap.
-  const [truncated, setTruncated] = useState(false)
+  const listing = useQuery({
+    queryKey: queryKeys.githubRepositories(id),
+    queryFn: ({ signal }) => loadRepositories(id, signal),
+    enabled: validId,
+    // Each read asks GitHub; returning to the tab is not a reason to repeat it.
+    refetchOnWindowFocus: false,
+  })
+  // Repositories added by URL are not part of the GitHub listing response.
+  const [added, setAdded] = useState<RepositoryRow[]>([])
+  const repositories = useMemo(() => {
+    if (!listing.data) return null
+    const listed = new Set(
+      listing.data.rows.map((repo) => repo.githubRepositoryId),
+    )
+    return [
+      ...added.filter((repo) => !listed.has(repo.githubRepositoryId)),
+      ...listing.data.rows,
+    ]
+  }, [listing.data, added])
+  const loading = listing.isPending
+  const failures = listing.data?.failures ?? []
+  const truncated = listing.data?.truncated ?? false
+  const [installError, setInstallError] = useState('')
+  const loadError =
+    installError ||
+    (listing.isError &&
+    !(listing.error instanceof SessionError && listing.error.status === 401)
+      ? '저장소 목록을 불러오지 못했습니다. 다시 시도해주세요.'
+      : '')
+  const reloadRepositories = () => {
+    setInstallError('')
+    void listing.refetch()
+  }
 
-  const [selected, setSelected] = useState<number[]>([])
+  const [picks, setPicks] = useState<number[]>([])
+  // A refreshed list drops selections that are gone or already linked, so the
+  // UI never submits repository ids the user can no longer see.
+  const selected = useMemo(
+    () => reconcileRepositorySelection(picks, repositories ?? []),
+    [picks, repositories],
+  )
+  const setSelected = setPicks
   const [query, setQuery] = useState('')
   const [owner, setOwner] = useState<string>(OWNER_ALL)
   const [sort, setSort] = useState<SortKey>('recent')
@@ -201,54 +267,6 @@ export function ConnectReposPage() {
   function showToast(text: string) {
     setToasts((current) => [...current, { id: Date.now(), text }])
   }
-
-  useEffect(() => {
-    if (!validId) return
-    const controller = new AbortController()
-    async function load() {
-      try {
-        const search = new URLSearchParams({ projectId: String(id) })
-        const response = await authenticatedFetch(
-          `${API_PATHS.githubRepositories}?${search}`,
-          { signal: controller.signal },
-        )
-        if (!response.ok) throw new Error('Repository request failed')
-        const data = await readData(
-          response,
-          isSelectableRepositories,
-          'Invalid repository list',
-        )
-        if (controller.signal.aborted) return
-        const refreshedRepositories = data.installations.flatMap((group) =>
-          group.repositories.map((repo) => ({
-            ...repo,
-            accountLogin: group.installation?.accountLogin ?? repo.owner,
-            // GitHub's own value is "Organization"; anything else, including a
-            // missing field, is treated as a personal account.
-            organization: group.installation?.accountType === 'Organization',
-          })),
-        )
-        setRepositories(refreshedRepositories)
-        setSelected((current) =>
-          reconcileRepositorySelection(current, refreshedRepositories),
-        )
-        setFailures(data.failedInstallations ?? [])
-        setTruncated(
-          data.truncated === true ||
-            data.installations.some((it) => it.truncated === true),
-        )
-      } catch (cause) {
-        if (controller.signal.aborted) return
-        // AuthProvider already routes an expiry to sign-in.
-        if (cause instanceof SessionError && cause.status === 401) return
-        setLoadError('저장소 목록을 불러오지 못했습니다. 다시 시도해주세요.')
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [id, validId, attempt])
 
   const ownerOptions = useMemo(
     () => ownerSummary(repositories ?? []),
@@ -311,25 +329,25 @@ export function ConnectReposPage() {
         setUrlError('이미 이 프로젝트에 연결된 저장소입니다.')
         return
       }
-      setRepositories((current) => {
-        if (
-          current?.some(
-            (item) => item.githubRepositoryId === repo.githubRepositoryId,
-          )
+      if (
+        !repositories?.some(
+          (item) => item.githubRepositoryId === repo.githubRepositoryId,
         )
-          return current
+      ) {
         // The resolve endpoint answers per repository and carries no
         // installation, so reuse the account type already known for this owner.
-        const known = current?.find((item) => item.accountLogin === repo.owner)
-        return [
+        const known = repositories?.find(
+          (item) => item.accountLogin === repo.owner,
+        )
+        setAdded((current) => [
           {
             ...repo,
             accountLogin: repo.owner,
             organization: known?.organization ?? false,
           },
-          ...(current ?? []),
-        ]
-      })
+          ...current,
+        ])
+      }
       setSelected((current) =>
         current.includes(repo.githubRepositoryId)
           ? current
@@ -422,7 +440,7 @@ export function ConnectReposPage() {
       window.location.href = data.installUrl
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
-      setLoadError(
+      setInstallError(
         cause instanceof Error
           ? cause.message
           : 'GitHub App 설치 주소를 열지 못했습니다.',
@@ -523,11 +541,8 @@ export function ConnectReposPage() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => {
-                      setLoading(true)
-                      setLoadError('')
-                      setAttempt((value) => value + 1)
-                    }}
+                    loading={listing.isFetching}
+                    onClick={reloadRepositories}
                   >
                     다시 불러오기
                   </Button>
@@ -558,11 +573,8 @@ export function ConnectReposPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => {
-                  setLoading(true)
-                  setLoadError('')
-                  setAttempt((value) => value + 1)
-                }}
+                loading={listing.isFetching}
+                onClick={reloadRepositories}
               >
                 다시 시도
               </Button>

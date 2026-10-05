@@ -1,5 +1,6 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { useNavigate } from 'react-router'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Drawer } from '../components/ui'
 import { AiConsentModal } from '../components/AiConsentModal'
 import { useAnalysisStart } from '../analysis/useAnalysisStart'
@@ -10,8 +11,8 @@ import {
   getPrPage,
   getPrOverview,
   type loadOverview,
-  type PrPage,
 } from '../lib/projectOverviewApi'
+import { queryKeys } from '../lib/queryKeys'
 import type { ProjectDetail } from '../lib/projectApi'
 
 export function AnalysisManagementDrawer({
@@ -35,39 +36,27 @@ export function AnalysisManagementDrawer({
   const analysis = useSyncExternalStore(projectAnalysis.subscribe, () =>
     projectAnalysis.get(project.id),
   )
-  const [failed, setFailed] = useState<PrPage | null>(null)
   const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
   const failedCount = data?.overview?.failedCount
+  // Keyed by the failure count, so a changed overview re-reads the reasons.
+  const failedOptions = { analysisStatus: 'FAILED', size: 10, failedCount }
+  const failedQuery = useQuery({
+    queryKey: queryKeys.pullRequests(project.id, failedOptions),
+    queryFn: ({ signal }) =>
+      getPrPage(project.id, { analysisStatus: 'FAILED', size: 10 }, signal),
+    placeholderData: keepPreviousData,
+  })
+  const failed = failedQuery.data ?? null
   const busy = consent.state.phase !== 'idle' || retry.phase === 'requesting'
   const collecting =
     ['queued', 'requesting', 'unknown'].includes(analysis.phase) ||
     ['QUEUED', 'RUNNING'].includes(project.lastAnalysis?.status ?? '')
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      try {
-        const list = await getPrPage(
-          project.id,
-          { analysisStatus: 'FAILED', size: 10 },
-          controller.signal,
-        )
-        if (!controller.signal.aborted) setFailed(list)
-      } catch {
-        if (!controller.signal.aborted)
-          setError('실패한 PR의 상세 사유를 불러오지 못했습니다.')
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [project.id, failedCount, attempt])
   async function checkStatus() {
     setError('')
     try {
       const latest = await getPrOverview(project.id)
       prRetry.allowAfterStatus(project.id, latest.pendingCount)
       refresh()
-      setAttempt((v) => v + 1)
     } catch {
       setError('상태를 확인하지 못했습니다. 재요청하지 않고 다시 조회해주세요.')
     }
@@ -81,7 +70,6 @@ export function AnalysisManagementDrawer({
       if (kind === 'failed') {
         await prRetry.request(project.id)
         refresh()
-        setAttempt((v) => v + 1)
       } else {
         projectAnalysis.queue(project.id)
         void projectAnalysis.consume(project.id)
@@ -143,6 +131,11 @@ export function AnalysisManagementDrawer({
               }
             >
               {retry.message}
+            </Alert>
+          )}
+          {failedQuery.isError && (
+            <Alert tone="warning">
+              실패한 PR의 상세 사유를 불러오지 못했습니다.
             </Alert>
           )}
           {error && <Alert tone="warning">{error}</Alert>}
