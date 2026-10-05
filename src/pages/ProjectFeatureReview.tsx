@@ -1,10 +1,6 @@
-import {
-  useEffect,
-  useSyncExternalStore,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useSyncExternalStore, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
+import { useQuery } from '@tanstack/react-query'
 import {
   Alert,
   Badge,
@@ -22,18 +18,19 @@ import {
   confirmAllFeatures,
   confirmFeature,
   deleteFeature,
-  getFeatureReviewList,
-  getFeatureReviewSummary,
   mergeFeature,
   splitFeature,
   updateFeature,
   type FeatureIssueType,
   type FeatureReviewFilter,
   type FeatureReviewItem,
-  type FeatureReviewList,
   type FeatureReviewStatus,
   type FeatureReviewSummary,
 } from '../lib/featureReviewApi'
+import {
+  featureReviewListQuery,
+  featureReviewSummaryQuery,
+} from '../lib/featureReviewQueries'
 
 import { getFeatureReviewOwner } from '../analysis/featureReview'
 
@@ -314,21 +311,26 @@ export function ProjectFeatureReview({
 }) {
   const [params, setParams] = useSearchParams()
   const filter = filterQuery[params.get('review') ?? ''] ?? 'ALL'
-  const [summary, setSummary] = useState<FeatureReviewSummary | null>(null)
-  const [result, setResult] = useState<FeatureReviewList | null>(null)
-  const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
+  // The owner's reconciliation writes these same cache entries, so a mutation
+  // updates the list in place instead of reloading the whole screen.
+  const summaryQuery = useQuery(featureReviewSummaryQuery(specDocumentId))
+  const listQuery = useQuery(featureReviewListQuery(specDocumentId, filter))
+  const summary = summaryQuery.data ?? null
+  const result = listQuery.data ?? null
+  const error =
+    summaryQuery.isError || listQuery.isError
+      ? '기능 목록을 불러오지 못했습니다.'
+      : ''
   const [dialog, setDialog] = useState<ReviewDialog>(null)
   const owner = getFeatureReviewOwner(specDocumentId)
   const mutation = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
-  const [loadedRevision, setLoadedRevision] = useState(-1)
   const { notice } = mutation
   const pendingAction = mutation.label
+  // Edits wait for a list that is current: the owner holds its phase until it
+  // has re-read the lists on screen, and a list being re-read (for example
+  // after remounting on stale cached data) is not offered for editing either.
   const busy =
-    mutation.phase !== 'idle' ||
-    !result ||
-    !!error ||
-    loadedRevision !== mutation.revision
+    mutation.phase !== 'idle' || !result || !!error || listQuery.isFetching
   const [editName, setEditName] = useState('')
   const [editRequirements, setEditRequirements] = useState<
     { id?: number; content: string }[]
@@ -337,30 +339,6 @@ export function ProjectFeatureReview({
   const [mergeName, setMergeName] = useState('')
   const [splitNames, setSplitNames] = useState<Record<number, string>>({})
   const [formError, setFormError] = useState('')
-
-  useEffect(() => {
-    const controller = new AbortController()
-    async function load() {
-      setResult(null)
-      setError('')
-      setSummary(null)
-      const [summaryResult, listResult] = await Promise.allSettled([
-        getFeatureReviewSummary(specDocumentId, controller.signal),
-        getFeatureReviewList(specDocumentId, filter, controller.signal),
-      ])
-      if (controller.signal.aborted) return
-      if (summaryResult.status === 'fulfilled') setSummary(summaryResult.value)
-      if (listResult.status === 'fulfilled') setResult(listResult.value)
-      setLoadedRevision(mutation.revision)
-      if (
-        summaryResult.status === 'rejected' ||
-        listResult.status === 'rejected'
-      )
-        setError('기능 목록을 불러오지 못했습니다.')
-    }
-    void load()
-    return () => controller.abort()
-  }, [specDocumentId, filter, attempt, mutation.revision])
 
   const runMutation = async (
     label: string,
@@ -582,7 +560,7 @@ export function ProjectFeatureReview({
                   size="sm"
                   variant="secondary"
                   // Unlock only once the list below is the one just read.
-                  disabled={loadedRevision !== mutation.revision || !!error}
+                  disabled={listQuery.isFetching || !!error}
                   onClick={() => owner.acknowledge()}
                 >
                   확인했습니다, 다시 편집
@@ -619,7 +597,11 @@ export function ProjectFeatureReview({
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => setAttempt((value) => value + 1)}
+              loading={listQuery.isFetching || summaryQuery.isFetching}
+              onClick={() => {
+                void listQuery.refetch()
+                void summaryQuery.refetch()
+              }}
             >
               다시 불러오기
             </Button>

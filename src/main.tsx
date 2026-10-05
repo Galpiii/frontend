@@ -1,21 +1,27 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
+import { QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './auth/AuthProvider'
 import { consumeCallback, initializeSession } from './auth/bootstrap'
+import { queryClient } from './lib/queryClient'
+import { connectFeatureReviewCache } from './lib/featureReviewQueries'
 
 const session = initializeSession(
   consumeCallback(window.location, window.history),
 )
+connectFeatureReviewCache(queryClient)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <AuthProvider session={session}>
-        <App />
-      </AuthProvider>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider session={session}>
+          <App />
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   </StrictMode>,
 )

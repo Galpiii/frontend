@@ -11,6 +11,23 @@ type Snapshot = {
   revision: number
 }
 
+/**
+ * What a reconciliation reads. By default it fetches directly; the app swaps in
+ * cache-backed reads (see `lib/featureReviewQueries.ts`) so the screen shows
+ * this same response instead of requesting it again.
+ */
+export interface FeatureReviewReads {
+  list: (documentId: number) => Promise<unknown>
+  summary: (documentId: number) => Promise<unknown>
+}
+let reads: FeatureReviewReads = {
+  list: (documentId) => getFeatureReviewList(documentId, 'ALL'),
+  summary: (documentId) => getFeatureReviewSummary(documentId),
+}
+export function configureFeatureReviewReads(next: FeatureReviewReads) {
+  reads = next
+}
+
 // A document owns its request even when no review screen is subscribed.
 class FeatureReviewOwner {
   private state: Snapshot = {
@@ -61,8 +78,8 @@ class FeatureReviewOwner {
     if (this.state.phase === 'checking') return
     this.publish({ phase: 'checking', label: '최신 기능 목록 확인 중' })
     const results = await Promise.allSettled([
-      getFeatureReviewList(this.documentId, 'ALL'),
-      getFeatureReviewSummary(this.documentId),
+      reads.list(this.documentId),
+      reads.summary(this.documentId),
     ])
     const failed = results.some((result) => result.status === 'rejected')
     this.publish({
