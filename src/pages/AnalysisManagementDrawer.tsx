@@ -86,7 +86,7 @@ export function AnalysisManagementDrawer({
         projectAnalysis.queue(project.id)
         void projectAnalysis.consume(project.id)
         onClose()
-        navigate(`/project/${project.id}`)
+        navigate(`/projects/${project.id}`)
       }
     } catch {
       setError('동의 정보를 확인하지 못했습니다. 다시 시도해주세요.')

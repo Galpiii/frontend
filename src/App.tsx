@@ -1,4 +1,11 @@
-import { Navigate, Outlet, Route, Routes } from 'react-router'
+import {
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from 'react-router'
 import { ComponentPreview } from './pages/ComponentPreview'
 import { ConnectReposPage } from './pages/ConnectReposPage'
 import { LandingPage } from './pages/LandingPage'
@@ -24,6 +31,13 @@ function GuestOnly() {
   return <Outlet />
 }
 
+/** Older links used `/project/:id`; keep them working, query string included. */
+function LegacyProjectRedirect() {
+  const { projectId } = useParams()
+  const { search } = useLocation()
+  return <Navigate to={`/projects/${projectId}${search}`} replace />
+}
+
 export default function App() {
   const auth = useAuth()
 
@@ -45,7 +59,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/new" element={<NewProjectPage />} />
-        <Route path="/project/:projectId" element={<ProjectDetailPage />} />
+        <Route path="/project/:projectId" element={<LegacyProjectRedirect />} />
         <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
         <Route
           path="/projects/:projectId/repositories"

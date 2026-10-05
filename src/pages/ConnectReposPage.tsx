@@ -389,7 +389,7 @@ export function ConnectReposPage() {
           .filter((repo) => selected.includes(repo.githubRepositoryId))
           .map((repo) => repo.repositoryId),
       )
-      navigate(`/project/${id}`, { replace: true })
+      navigate(`/projects/${id}`, { replace: true })
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       setConfirmOpen(false)

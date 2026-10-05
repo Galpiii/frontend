@@ -357,7 +357,7 @@ const pick = () =>
     buffer: Buffer.from('%PDF-1.4 fixture'),
   })
 async function open() {
-  await page.goto(`${origin}/project/7?tab=match`)
+  await page.goto(`${origin}/projects/7?tab=match`)
   await page.getByRole('heading', { name: '기능대조', exact: true }).waitFor()
 }
 async function prepareReplacement() {

@@ -213,7 +213,7 @@ export function ProjectsPage() {
     try {
       if (!(await analysis.flow.requestConsent())) return
       projectAnalysis.queue(project.id)
-      navigate(`/project/${project.id}`)
+      navigate(`/projects/${project.id}`)
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       showToast('동의 정보를 확인하지 못했습니다.', 'danger')
@@ -338,7 +338,7 @@ export function ProjectsPage() {
                   <div className="flex items-start justify-between gap-3">
                     <h2 className="min-w-0 break-words text-[15px] font-extrabold">
                       <Link
-                        to={`/project/${project.id}`}
+                        to={`/projects/${project.id}`}
                         className="after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-primary"
                       >
                         {project.name}

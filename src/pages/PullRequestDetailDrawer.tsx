@@ -101,7 +101,7 @@ function RelatedFeatures({
               className="border-b border-line last:border-b-0"
             >
               <Link
-                to={`/project/${projectId}?tab=match&matchFeature=${feature.featureId}`}
+                to={`/projects/${projectId}?tab=match&matchFeature=${feature.featureId}`}
                 className="block px-4 py-3 hover:bg-subtle"
               >
                 <span className="flex items-start justify-between gap-2">

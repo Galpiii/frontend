@@ -104,7 +104,7 @@ export function ProjectPullRequests({
           action={
             <Button
               variant="secondary"
-              onClick={() => navigate(`/project/${project.id}?tab=match`)}
+              onClick={() => navigate(`/projects/${project.id}?tab=match`)}
             >
               기능명세서 등록 →
             </Button>
