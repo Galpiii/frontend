@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { Alert, Badge, Button, Card, Drawer } from '../components/ui'
 import { PrStatusBadge } from '../components/PrStatusBadge'
+import {
+  getPullRequestFeatures,
+  type PullRequestFeatures,
+} from '../lib/featureMatchApi'
 import {
   changeTypes,
   failureReasons,
@@ -8,12 +13,139 @@ import {
   type PullRequestDetail,
 } from '../lib/pullRequestApi'
 import { displayDate, githubUrl } from '../lib/projectOverviewApi'
+const relatedFeatureNotices = {
+  NO_RUN:
+    '아직 기능대조를 실행하지 않았습니다. 기능대조를 실행하면 관련 기능을 확인할 수 있습니다.',
+  IN_PROGRESS:
+    '기능대조가 진행 중입니다. 대조가 끝나면 관련 기능을 확인할 수 있습니다.',
+  STALE:
+    '명세서나 저장소가 변경되어 기능대조 결과가 오래되었습니다. 기능대조를 다시 실행해주세요.',
+}
+
+function RelatedFeatures({
+  projectId,
+  pullRequestId,
+  repositoryId,
+}: {
+  projectId: number
+  pullRequestId: number
+  repositoryId: number
+}) {
+  const [data, setData] = useState<PullRequestFeatures | null>(null)
+  const [error, setError] = useState('')
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    const controller = new AbortController()
+    getPullRequestFeatures(
+      projectId,
+      pullRequestId,
+      repositoryId,
+      controller.signal,
+    )
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setError('관련 기능을 불러오지 못했습니다.')
+      })
+    return () => controller.abort()
+  }, [projectId, pullRequestId, repositoryId, attempt])
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="font-bold">관련 기능</h3>
+        {data?.state === 'READY' && data.features.length > 0 && (
+          <span className="text-xs text-muted">{data.features.length}개</span>
+        )}
+      </div>
+      {error ? (
+        <div className="mt-3">
+          <Alert
+            tone="warning"
+            action={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setError('')
+                  setData(null)
+                  setAttempt((v) => v + 1)
+                }}
+              >
+                다시 조회
+              </Button>
+            }
+          >
+            {error}
+          </Alert>
+        </div>
+      ) : !data ? (
+        <p role="status" className="mt-2 text-[13px] text-muted">
+          관련 기능을 찾고 있습니다…
+        </p>
+      ) : data.state !== 'READY' ? (
+        <p className="mt-2 text-[13px] leading-relaxed text-muted">
+          {relatedFeatureNotices[data.state]}
+        </p>
+      ) : data.features.length === 0 ? (
+        <p className="mt-2 text-[13px] leading-relaxed text-muted">
+          이 PR과 연결된 기능이 없습니다. 기능별 대조 결과에서 직접 연결할 수
+          있습니다.
+        </p>
+      ) : (
+        <ul className="mt-3 overflow-hidden rounded-xl border border-line">
+          {data.features.map((feature) => (
+            <li
+              key={feature.featureId}
+              className="border-b border-line last:border-b-0"
+            >
+              <Link
+                to={`/project/${projectId}?tab=match&matchFeature=${feature.featureId}`}
+                className="block px-4 py-3 hover:bg-subtle"
+              >
+                <span className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 flex-1">
+                    {feature.sectionTitle && (
+                      <span className="block break-words text-xs text-muted">
+                        {feature.sectionTitle}
+                      </span>
+                    )}
+                    <span className="mt-0.5 block break-words text-[13px] font-bold text-ink">
+                      {feature.name}
+                    </span>
+                  </span>
+                  <Badge
+                    tone={feature.source === 'USER' ? 'accent' : 'neutral'}
+                  >
+                    {feature.source === 'USER' ? '사용자 연결' : 'AI 연결'}
+                  </Badge>
+                </span>
+                {feature.reason && (
+                  <span className="mt-1.5 line-clamp-2 block break-words text-xs leading-relaxed text-body">
+                    {feature.reason}
+                  </span>
+                )}
+                <span className="mt-2 block text-xs font-bold text-primary">
+                  대조 근거 보기 →
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
 export function PullRequestDetailDrawer({
   id,
+  projectId,
   repositoryIds,
   onClose,
 }: {
   id: number
+  projectId: number
   repositoryIds: number[]
   onClose: () => void
 }) {
@@ -169,12 +301,11 @@ export function PullRequestDetailDrawer({
               수집 근거 제한: {data.incompleteReasons.join(' · ')}
             </Alert>
           )}
-          <Card>
-            <h3 className="font-bold">관련 기능</h3>
-            <p className="mt-2 text-[13px] text-muted">
-              기능–PR 대조는 준비 중입니다. 아직 관련 기능을 확인할 수 없습니다.
-            </p>
-          </Card>
+          <RelatedFeatures
+            projectId={projectId}
+            pullRequestId={data.id}
+            repositoryId={data.repository.id}
+          />
         </div>
       )}
     </Drawer>

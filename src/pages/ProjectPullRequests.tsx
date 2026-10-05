@@ -333,6 +333,7 @@ export function ProjectPullRequests({
         <PullRequestDetailDrawer
           key={selectedPr}
           id={selectedPr}
+          projectId={project.id}
           repositoryIds={project.repositories.map((r) => r.repositoryId)}
           onClose={() => update({ pr: '' }, false)}
         />
