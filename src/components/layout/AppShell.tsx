@@ -2,6 +2,18 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import logo from '../../assets/logo.png'
 import { cn } from '../../lib/cn'
+/** The 갈피 logo alone, decorative: a nearby text always names the service. */
+export function BrandMark({ className }: { className?: string }) {
+  return (
+    <img
+      src={logo}
+      alt=""
+      width={32}
+      height={32}
+      className={cn('size-8 shrink-0 object-contain', className)}
+    />
+  )
+}
 export function Brand({
   name = '갈피',
   size = 'header',
@@ -16,13 +28,7 @@ export function Brand({
         size === 'landing' ? 'text-[22px]' : 'text-[18px]',
       )}
     >
-      <img
-        src={logo}
-        alt=""
-        width={32}
-        height={32}
-        className="size-8 shrink-0 object-contain"
-      />
+      <BrandMark />
       {name}
     </span>
   )

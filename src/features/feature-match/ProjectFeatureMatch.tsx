@@ -13,6 +13,7 @@ import {
   Modal,
   Progress,
 } from '../../components/ui'
+import { BrandMark } from '../../components/layout'
 import { getFeatureReviewSummary } from '../feature-review/api'
 import {
   getMatchResults,
@@ -294,6 +295,7 @@ export function ProjectFeatureMatch({
       {actionError && <Alert tone="warning">{actionError}</Alert>}
       {state.phase === 'idle' && !run && (
         <EmptyState
+          icon={<BrandMark />}
           title="아직 기능대조를 실행하지 않았습니다"
           description="기능 검토를 마친 뒤 실행할 수 있습니다. 검토하지 않은 기능이 있어도 대조는 가능합니다."
         />
