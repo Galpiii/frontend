@@ -80,6 +80,15 @@ function isProjectDetail(value: unknown): value is ProjectDetail {
   )
 }
 
+/** The project is gone or not this user's; polling it again cannot help. */
+export class ProjectNotFound extends Error {
+  constructor() {
+    super(
+      '프로젝트를 찾을 수 없습니다. 삭제되었거나 접근 권한이 없을 수 있습니다.',
+    )
+  }
+}
+
 export async function getProjectDetail(
   projectId: number,
   signal?: AbortSignal,
@@ -87,12 +96,8 @@ export async function getProjectDetail(
   const response = await authenticatedFetch(projectPaths.project(projectId), {
     signal,
   })
-  if (!response.ok)
-    throw new Error(
-      response.status === 404
-        ? '프로젝트를 찾을 수 없습니다. 삭제되었거나 접근 권한이 없을 수 있습니다.'
-        : '프로젝트 정보를 불러오지 못했습니다.',
-    )
+  if (response.status === 404) throw new ProjectNotFound()
+  if (!response.ok) throw new Error('프로젝트 정보를 불러오지 못했습니다.')
   return readData(
     response,
     isProjectDetail,

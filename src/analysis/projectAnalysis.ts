@@ -1,6 +1,7 @@
 import {
   AnalysisRequestRejected,
   getProjectDetail,
+  ProjectNotFound,
   startProjectAnalysis,
   type ProjectDetail,
 } from '../lib/projectApi.ts'
@@ -18,6 +19,8 @@ export interface ProjectAnalysisState {
   awaitingRun?: boolean
   preflightFailed?: boolean
   waitingForOtherRun?: boolean
+  /** Set by a 404 read; screens stop polling and show a not-found state. */
+  notFound?: boolean
 }
 const empty: ProjectAnalysisState = { phase: 'idle' }
 const defaultApi = {
@@ -105,6 +108,7 @@ export class ProjectAnalysisStore {
         phase: rejected ? 'rejected' : 'unknown',
         preflightFailed: !dispatched,
         consentRequired: error instanceof ConsentRequired,
+        ...(error instanceof ProjectNotFound ? { notFound: true } : {}),
       })
     }
     await this.refresh(id)
@@ -140,17 +144,23 @@ export class ProjectAnalysisStore {
       this.update(id, {
         project,
         error: undefined,
+        notFound: false,
         ...(discovered ? { awaitingRun: false } : {}),
         ...(current.phase === 'unknown' && discovered
           ? { phase: 'confirmed' as const }
           : {}),
       })
-    } catch {
+    } catch (error) {
       if (revision !== this.revisions.get(id)) return
-      this.update(id, {
-        error:
-          '서버 상태를 불러오지 못했습니다. 상태 확인을 다시 시도해주세요.',
-      })
+      this.update(
+        id,
+        error instanceof ProjectNotFound
+          ? { notFound: true, error: undefined }
+          : {
+              error:
+                '서버 상태를 불러오지 못했습니다. 상태 확인을 다시 시도해주세요.',
+            },
+      )
     }
   }
 }

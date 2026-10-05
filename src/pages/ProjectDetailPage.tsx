@@ -14,7 +14,13 @@ import { ProjectRepositoryCards } from './ProjectRepositoryCards'
 import { ProjectPullRequests } from './ProjectPullRequests'
 import { ProjectSpecification } from './ProjectSpecification'
 import { displayDate } from '../lib/projectOverviewApi'
-import { Alert, Button, SectionHeader, StatCard } from '../components/ui'
+import {
+  Alert,
+  Button,
+  EmptyState,
+  SectionHeader,
+  StatCard,
+} from '../components/ui'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { NewProjectPage } from './NewProjectPage'
 import { resumeOnboardingStep } from './onboardingSteps'
@@ -59,7 +65,9 @@ function ProjectHome({ projectId }: { projectId: number }) {
   const state = useSyncExternalStore(projectAnalysis.subscribe, () =>
     projectAnalysis.get(projectId),
   )
-  const project = state.project
+  const notFound = !!state.notFound
+  // A deleted project keeps its last snapshot in the store; nothing may poll it.
+  const project = notFound ? undefined : state.project
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const requestedTab = searchParams.get('tab')
@@ -76,18 +84,41 @@ function ProjectHome({ projectId }: { projectId: number }) {
       overview.refreshKey,
     ),
   )
-  const openSpec = () => navigate(`/project/${projectId}?tab=match`)
-  useDocumentTitle(project?.name ?? '프로젝트')
+  const openSpec = () => navigate(`/projects/${projectId}?tab=match`)
+  useDocumentTitle(
+    notFound ? '프로젝트를 찾을 수 없습니다' : (project?.name ?? '프로젝트'),
+  )
   useEffect(() => {
     void projectAnalysis.consume(projectId)
     void projectAnalysis.refresh(projectId)
+  }, [projectId])
+  useEffect(() => {
+    // A 404 will not change by asking again every few seconds.
+    if (notFound) return
     // Only GETs repeat. Navigation/unmount never aborts a submitted mutation.
     const timer = window.setInterval(() => {
       void projectAnalysis.refresh(projectId)
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [projectId])
+  }, [projectId, notFound])
 
+  if (notFound)
+    return (
+      <AppShell header={<AppHeader />}>
+        <div className="mx-auto max-w-[720px] py-6">
+          <EmptyState
+            level={1}
+            title="프로젝트를 찾을 수 없습니다"
+            description="삭제되었거나 접근 권한이 없는 프로젝트일 수 있습니다. 프로젝트 목록에서 다시 선택해주세요."
+            action={
+              <Button onClick={() => navigate('/projects')}>
+                프로젝트 목록으로
+              </Button>
+            }
+          />
+        </div>
+      </AppShell>
+    )
   if (project && state.phase === 'idle') {
     const step = resumeOnboardingStep(project)
     if (step === 'SPEC') return <NewProjectPage project={project} />
@@ -157,17 +188,17 @@ function ProjectHome({ projectId }: { projectId: number }) {
             {
               id: 'home',
               label: '프로젝트 개요',
-              href: `/project/${projectId}`,
+              href: `/projects/${projectId}`,
             },
             {
               id: 'prs',
               label: 'PR 목록',
-              href: `/project/${projectId}?tab=prs`,
+              href: `/projects/${projectId}?tab=prs`,
             },
             {
               id: 'match',
               label: '기능대조',
-              href: `/project/${projectId}?tab=match`,
+              href: `/projects/${projectId}?tab=match`,
             },
           ]}
           footer={
@@ -249,7 +280,7 @@ function ProjectHome({ projectId }: { projectId: number }) {
               ) : showFailures ? (
                 <Button
                   onClick={() =>
-                    navigate(`/project/${projectId}?tab=prs&status=FAILED`)
+                    navigate(`/projects/${projectId}?tab=prs&status=FAILED`)
                   }
                 >
                   PR 목록 열기 →
