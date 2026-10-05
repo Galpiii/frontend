@@ -44,12 +44,25 @@ CI는 PR과 `main` push에서 `format:check` → `lint` → `test` → `build`�
 
 ```
 src/
-  auth/        인증 상태와 세션 (AuthProvider, session, bootstrap)
-  components/  공통 UI (ui/, layout/) — API 호출 없음
-  lib/         API 경로·응답 헬퍼, 클래스 병합, 훅
-  pages/       화면 단위 컴포넌트
-tests/         인증 흐름 테스트
+  main.tsx     진입점: QueryClient·라우터·인증 Provider 연결
+  app/         App(라우트·가드), QueryClient 설정
+  pages/       라우트 진입 화면만. 데이터 접근은 features의 api를 사용
+  features/    도메인별 코드 — API, 상태 owner, 쿼리 키, 화면 조각
+    auth/            세션·토큰, AuthProvider, 콜백 처리, 로그인 버튼
+    consent/         외부 AI 전송 동의 API·흐름·모달
+    projects/        프로젝트 API, 분석 요청 owner, 개요 조회, 온보딩 단계
+    repositories/    GitHub 저장소 조회·연결 API, 필터, 연결된 저장소 카드
+    pull-requests/   PR 목록·상세·재분석, 분석 관리 드로어
+    feature-spec/    기능명세서 업로드·교체, 기능대조 탭 컨테이너
+    feature-review/  기능 검토 API·owner·쿼리, 검토 화면
+    feature-match/   기능대조 API·owner·쿼리, 결과·근거·PR 연결 화면
+    landing/         랜딩 결과 예시
+  components/  공통 UI (ui/, layout/, Markdown) — API 호출 없음
+  lib/         API 경로·응답 헬퍼, 포맷, 클래스 병합, 공통 훅
+tests/         모듈 단위 테스트 (helpers/sources.mjs로 src 모듈을 변환해 실행)
 ```
+
+의존 방향은 `app → pages → features → components·lib` 한쪽으로만 흐릅니다. `components/`·`lib/`는 `features/`·`pages/`·`app/`을, `features/`는 `pages/`·`app/`을 import할 수 없으며 ESLint(`no-restricted-imports`)가 이를 검사합니다. 테스트가 직접 불러오는 모듈(각 feature의 `api.ts`와 owner 등)은 서로를 `.ts` 확장자를 붙여 import합니다.
 
 라우트와 인증 흐름은 [`src/pages/README.md`](src/pages/README.md), 공통 컴포넌트 사용법은 [`src/components/README.md`](src/components/README.md)를 참고하세요.
 

@@ -5,14 +5,14 @@
 - `ProjectDetailPage.tsx`: fetches the latest saved project. Drafts resume the spec or repository step; connected projects show their saved spec and repositories.
 - `NewProjectPage.tsx`: project creation and optional PDF upload. After creation, the name is locked; upload retries and resumed forms reuse the existing project. Skipping a spec saves `onboardingStep=REPOSITORIES` before navigation.
 - `ConnectReposPage.tsx`: repository lookup, selection, GitHub App installation and connection. After linking, it requests analysis separately and reports analysis failures without treating the saved link as a failure.
-- `onboardingSteps.ts`: shared step labels and the resume decision based on the saved step and resources.
-- `repositoryFilters.ts`: pure repository filtering and sorting functions, tested independently.
+- `features/projects/onboardingSteps.ts`: shared step labels and the resume decision based on the saved step and resources.
+- `features/repositories/repositoryFilters.ts`: pure repository filtering and sorting functions, tested independently.
 - `NotFoundPage.tsx`: unmatched routes.
 - `ComponentPreview.tsx`: development reference only, mounted at `/preview` in dev builds and excluded from the production bundle.
 
 ## Routes
 
-`main.tsx` mounts `BrowserRouter` outside `AuthProvider`, and `App.tsx` declares the routes:
+`main.tsx` mounts `BrowserRouter` outside `AuthProvider`, and `app/App.tsx` declares the routes:
 
 | Path                                | Screen              | Guard                                                    |
 | ----------------------------------- | ------------------- | -------------------------------------------------------- |
@@ -29,7 +29,7 @@ While auth is still resolving, `App` renders a loading screen instead of the rou
 
 ## Authentication state
 
-`AuthProvider` holds the only copy of sign-in state (`loading` / `authenticated` / `unauthenticated`), and screens read it with `useAuth`. Pages do not handle 401 themselves: `session.ts` reports a rejected session through `onUnauthorized`, the provider flips to `unauthenticated`, and `RequireAuth` moves the visitor to the sign-in screen. A first visit with no refresh cookie is a normal signed-out load, not an expiry, so it is not reported.
+`AuthProvider` holds the only copy of sign-in state (`loading` / `authenticated` / `unauthenticated`), and screens read it with `useAuth`. Pages do not handle 401 themselves: `features/auth/session.ts` reports a rejected session through `onUnauthorized`, the provider flips to `unauthenticated`, and `RequireAuth` moves the visitor to the sign-in screen. A first visit with no refresh cookie is a normal signed-out load, not an expiry, so it is not reported.
 
 Every backend call is bounded by a 15 second timeout, combined with the caller's own `AbortSignal` so existing cancellation still wins.
 
@@ -54,11 +54,11 @@ Use the same local frontend/backend hostname where cookies require same-site req
 
 ## Server reads
 
-Server reads go through TanStack Query (`lib/queryClient.ts`, keys in `lib/queryKeys.ts`). Each screen declares a query instead of managing `AbortController`s, attempt counters and timers itself: aborting on unmount or key change, deduplication, and keeping data on screen while the same key is refetched come from the library. Paginated lists keep the previous page (dimmed) while the next one loads. A read that fails is retried once, except an expired session, a missing project or a 4xx feature-match answer.
+Server reads go through TanStack Query (`app/queryClient.ts`; each feature defines its keys in its own `keys.ts`). Each screen declares a query instead of managing `AbortController`s, attempt counters and timers itself: aborting on unmount or key change, deduplication, and keeping data on screen while the same key is refetched come from the library. Paginated lists keep the previous page (dimmed) while the next one loads. A read that fails is retried once, except an expired session, a missing project or a 4xx feature-match answer.
 
 Everything read for one project lives under `['project', id]`, so a screen's refresh button invalidates that prefix and every part re-reads without its own reload wiring. Feature-match reads live under `['project', id, 'feature-match']`; connecting or unlinking a PR invalidates that prefix, and the evidence panel stays mounted while it refetches. The project overview refetches every 15 seconds and the matched-feature stat every 5 seconds only while a match is running; both pause in a hidden tab.
 
-Mutations are not queries. The owners in `analysis/` still decide what may be sent and keep their locks; they never replay a request whose outcome is unknown. Their own status reads (the project-analysis store and the feature-match owner) are repeated with `lib/usePolling.ts`, which pauses in a hidden tab and reads once when the tab becomes visible again. The feature-review owner writes its reconciliation reads into the review queries' cache (`lib/featureReviewQueries.ts`), so the screen shows the response that confirmed a mutation instead of requesting it again. It reads directly rather than through `fetchQuery`, because a screen unmounting mid-read cancels a cached fetch, and a cancelled fetch resolves with the old data.
+Mutations are not queries. The owners in each feature (`projectAnalysis.ts`, `matchOwner.ts`, `reviewOwner.ts`, `specUpload.ts`, `prRetry.ts`) still decide what may be sent and keep their locks; they never replay a request whose outcome is unknown. Their own status reads (the project-analysis store and the feature-match owner) are repeated with `lib/usePolling.ts`, which pauses in a hidden tab and reads once when the tab becomes visible again. The feature-review owner writes its reconciliation reads into the review queries' cache (`features/feature-review/queries.ts`), so the screen shows the response that confirmed a mutation instead of requesting it again. It reads directly rather than through `fetchQuery`, because a screen unmounting mid-read cancels a cached fetch, and a cancelled fetch resolves with the old data.
 
 ## Verification
 
@@ -68,7 +68,7 @@ GitHub button: official Invertocat SVG and Tailwind styling based on the [Primer
 
 ## File placement
 
-Keep route screens in `pages`, reusable presentation components in `components/ui`, and authentication in `auth`. The small screen-specific step/filter modules stay beside their pages. `lib/projectApi.ts` shares the analysis request and result message used by both the list and repository connection screens. It does not own UI state. No additional feature folders or state-management dependencies are needed for these screens.
+`pages` holds route entry screens only; they read and write the server through a feature's `api.ts`. Domain code lives in `features/<domain>`: its API module, its mutation owner, its query keys and the screen parts that belong to it. Reusable presentation components stay in `components`, shared helpers in `lib`, and app wiring (routes, QueryClient) in `app`. Imports point only downward (`app → pages → features → components/lib`), which ESLint enforces. `features/projects/api.ts` shares the analysis request and result message used by both the list and repository connection screens. It does not own UI state.
 
 ## Resuming creation
 
@@ -111,7 +111,7 @@ The reference HTML's sidebar, current-state banner, summary metrics and reposito
 
 Verified against the adjacent backend controllers/DTOs: `GET /projects/{id}` exposes `lastAnalysis` (run id/status), and `GET /analyses/{analysisRunId}` exposes per-repository results. This home uses the first endpoint, every five seconds while mounted; it does not invent an analysis-list endpoint. Repository collection states and incomplete-reason notices use the latter endpoint.
 
-`analysis/projectAnalysis.ts` owns in-memory intents and submitted requests across route changes and StrictMode remounts. Linking queues an intent synchronously, then navigates. The home consumes it once, checks the latest server state before POST, and distinguishes local requesting, confirmed queued/running, refusal, and uncertain acceptance. The list's manual analysis action also hands off to this owner. A fresh page load has no intent and only reads state.
+`features/projects/projectAnalysis.ts` owns in-memory intents and submitted requests across route changes and StrictMode remounts. Linking queues an intent synchronously, then navigates. The home consumes it once, checks the latest server state before POST, and distinguishes local requesting, confirmed queued/running, refusal, and uncertain acceptance. The list's manual analysis action also hands off to this owner. A fresh page load has no intent and only reads state.
 
 A clear refusal offers a manual retry. Network/timeout/5xx, HTTP 408/425 and conflicts (409, which can mean an existing run) reconcile through GET only. A missing run is not proof that a timed-out POST was rejected; no automatic or manual resend is offered while that attempt remains uncertain. Old terminal run ids cannot confirm a new request. An unreadable status response stays a read error. A consent refusal is displayed inline with guidance to explicitly review consent through the list; no modal opens automatically after linking.
 
@@ -160,7 +160,7 @@ Verified against the adjacent backend's `FeatureSpecApi`, `FeatureSpecController
 
 The completed and failed extraction views allow a replacement only when a document ID is available. A confirmation names both files and states the backend policy: existing extracted features and merge/split/confirmation review records are deleted irreversibly. The user confirms this before the existing AI consent flow. No feature–PR result retention policy is inferred. PENDING/PROCESSING and unknown states do not offer replacement.
 
-`analysis/featureSpecUpload.ts` owns request state across feature-view unmounts and route changes. Consent cancellation and unmount during preflight prevent dispatch. A fresh GET checks that the document ID and replaceable status still match before PUT. This is a client preflight, not a server conditional-write guarantee; another client can still change the document after that read. The current API offers no conditional document ID parameter.
+`features/feature-spec/specUpload.ts` owns request state across feature-view unmounts and route changes. Consent cancellation and unmount during preflight prevent dispatch. A fresh GET checks that the document ID and replaceable status still match before PUT. This is a client preflight, not a server conditional-write guarantee; another client can still change the document after that read. The current API offers no conditional document ID parameter.
 
 Explicit rejection allows a new manual intent. Network errors, HTTP 408/425 and all 5xx remain uncertain, including replacement failures that might have removed the original. The UI never claims the old document survived a 5xx. Status checks perform GET only; a different server document ID releases the completed/uncertain request lock. A missing or unchanged document does not authorize resending on its own. After such an explicit status check (`check`), the screen offers the user a way to lift an uncertain lock themselves (`acknowledge`), with a warning that a late request could still change the document. An accepted request is never unlocked this way; its new document releases it. Request state is in memory for the current page lifetime; reload restores server state and never automatically sends a mutation.
 
@@ -174,7 +174,7 @@ Verified against the adjacent backend's committed feature-review API on 2026-10-
 
 The review filter is stored as `review=required|unreviewed|reviewed`; omitting it selects all features. Counts come only from the summary endpoint. Feature cards retain the backend's section grouping and display review state, source pages, extracted requirements, source text, issue descriptions, duplicate candidates and split suggestions as React text. The review-required filter opens cards by default; other filters keep long lists compact. Loading uses layout-shaped placeholders, and malformed, rejected and empty responses remain distinct states.
 
-The screen connects individual and bulk confirmation, editing, deletion, duplicate-candidate merge and suggestion-based split to the committed backend endpoints. Editing sends the complete requirement list because the API replaces requirements as a set. Merge and split only use candidates and suggestions returned by the server. `analysis/featureReview.ts` owns each document's mutation across SPA navigation and StrictMode remounts. It keeps the lock through both follow-up GETs, and the screen stays disabled until its current list has loaded. Clear rejections are displayed outside the dismissed dialog; editing again uses freshly fetched requirements and suggestions. Review mutations and document replacement are disabled while review reconciliation is pending or has failed.
+The screen connects individual and bulk confirmation, editing, deletion, duplicate-candidate merge and suggestion-based split to the committed backend endpoints. Editing sends the complete requirement list because the API replaces requirements as a set. Merge and split only use candidates and suggestions returned by the server. `features/feature-review/reviewOwner.ts` owns each document's mutation across SPA navigation and StrictMode remounts. It keeps the lock through both follow-up GETs, and the screen stays disabled until its current list has loaded. Clear rejections are displayed outside the dismissed dialog; editing again uses freshly fetched requirements and suggestions. Review mutations and document replacement are disabled while review reconciliation is pending or has failed.
 
 Network/408/425/5xx outcomes are never replayed. Even a successful GET cannot prove that an uncertain mutation has finished: this API has no operation ID or completion receipt. The owner retains uncertainty and shows the latest list; a GET never lifts it on its own. Once a read has succeeded and that list is on screen, the user can lift the lock by confirming they checked it (`acknowledge`), with a warning that resending an unapplied change could duplicate a late request. A failed list or summary read also retains the lock; a later successful refresh unlocks only known outcomes. Ownership lasts for the current page lifetime, not across hard reloads, tabs, or devices. A reload reads server state without automatically sending any mutation.
 

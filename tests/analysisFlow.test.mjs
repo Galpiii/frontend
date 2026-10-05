@@ -1,67 +1,39 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import ts from 'typescript'
+import { loadSources } from './helpers/sources.mjs'
 
 async function modules(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'galpi-consent-test-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
-  for (const file of [
+  const load = await loadSources(t, [
     'lib/api',
-    'auth/session',
-    'lib/consentApi',
-    'lib/projectApi',
-    'lib/projectOverviewApi',
-    'lib/pullRequestApi',
-    'lib/featureSpecApi',
-    'lib/featureReviewApi',
-    'analysis/featureReview',
-    'analysis/prRetry',
-    'analysis/featureSpecUpload',
-    'analysis/analysisFlow',
-    'analysis/projectAnalysis',
-  ]) {
-    await mkdir(join(dir, file.split('/')[0]), { recursive: true })
-    const source = await readFile(
-      new URL(`../src/${file}.ts`, import.meta.url),
-      'utf8',
-    )
-    const { outputText } = ts.transpileModule(source, {
-      compilerOptions: {
-        target: ts.ScriptTarget.ES2023,
-        module: ts.ModuleKind.ESNext,
-      },
-    })
-    await writeFile(
-      join(dir, `${file}.mjs`),
-      (file === 'lib/api'
-        ? "import.meta.env = { VITE_API_BASE_URL: 'https://backend.example.test' };\n"
-        : '') + outputText.replaceAll(".ts'", ".mjs'"),
-    )
-  }
-  let result = {}
-  for (const file of [
-    'analysis/analysisFlow',
-    'analysis/projectAnalysis',
-    'lib/consentApi',
-    'lib/projectApi',
-    'lib/projectOverviewApi',
-    'lib/pullRequestApi',
-    'lib/featureSpecApi',
-    'lib/featureReviewApi',
-    'analysis/featureReview',
-    'analysis/prRetry',
-    'analysis/featureSpecUpload',
-    'auth/session',
+    'lib/format',
+    'features/auth/session',
+    'features/consent/api',
+    'features/projects/api',
+    'features/projects/overviewApi',
+    'features/pull-requests/api',
+    'features/feature-spec/api',
+    'features/feature-review/api',
+    'features/feature-review/reviewOwner',
+    'features/pull-requests/prRetry',
+    'features/feature-spec/specUpload',
+    'features/consent/analysisFlow',
+    'features/projects/projectAnalysis',
   ])
-    result = {
-      ...result,
-      ...(await import(pathToFileURL(join(dir, `${file}.mjs`)))),
-    }
-  return result
+  return load(
+    'features/consent/analysisFlow',
+    'features/projects/projectAnalysis',
+    'features/consent/api',
+    'features/projects/api',
+    'features/projects/overviewApi',
+    'features/pull-requests/api',
+    'features/feature-spec/api',
+    'features/feature-review/api',
+    'features/feature-review/reviewOwner',
+    'features/pull-requests/prRetry',
+    'features/feature-spec/specUpload',
+    'features/auth/session',
+    'lib/format',
+  )
 }
 const notice = {
   currentVersion: 'v1',

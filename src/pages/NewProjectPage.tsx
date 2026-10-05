@@ -1,30 +1,18 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { ONBOARDING_STEPS } from './onboardingSteps'
+import { ONBOARDING_STEPS } from '../features/projects/onboardingSteps'
 import { AppHeader, AppShell } from '../components/layout'
 import { Alert, Button, Card, Input, Modal, Stepper } from '../components/ui'
-import { authenticatedFetch, SessionError } from '../auth/session'
-import { API_PATHS, projectPaths, readData } from '../lib/api'
+import { authenticatedFetch, SessionError } from '../features/auth/session'
+import { projectPaths } from '../lib/api'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { cn } from '../lib/cn'
-import { skipProjectSpec } from '../lib/projectApi'
-import { useAnalysisStart } from '../analysis/useAnalysisStart'
-import { AiConsentModal } from '../components/AiConsentModal'
+import { createProject, skipProjectSpec } from '../features/projects/api'
+import { useAnalysisStart } from '../features/consent/useAnalysisStart'
+import { AiConsentModal } from '../features/consent/AiConsentModal'
 
 const MAX_SPEC_BYTES = 20 * 1024 * 1024
 const MAX_NAME_LENGTH = 100
-
-interface CreatedProject {
-  id: number
-}
-
-function isCreatedProject(value: unknown): value is CreatedProject {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as Record<string, unknown>).id === 'number'
-  )
-}
 
 /** Mirrors the backend's FEATURE-SPEC-FILE rules so a bad file never uploads. */
 function validateSpecFile(file: File) {
@@ -109,26 +97,7 @@ export function NewProjectPage({
       setSubmitting(true)
       let projectId = createdId
       if (projectId === null) {
-        const response = await authenticatedFetch(
-          API_PATHS.projects,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: trimmed }),
-            signal,
-          },
-          { verifySession: true },
-        )
-        if (!response.ok)
-          throw new Error(
-            '프로젝트를 만들지 못했습니다. 잠시 후 다시 시도해주세요.',
-          )
-        const created = await readData(
-          response,
-          isCreatedProject,
-          '프로젝트 응답을 확인할 수 없습니다.',
-        )
-        projectId = created.id
+        projectId = (await createProject(trimmed, signal)).id
         if (signal.aborted) return
         setCreatedId(projectId)
       }

@@ -1,5 +1,5 @@
-import { useAnalysisStart } from '../analysis/useAnalysisStart'
-import { AiConsentModal } from '../components/AiConsentModal'
+import { useAnalysisStart } from '../features/consent/useAnalysisStart'
+import { AiConsentModal } from '../features/consent/AiConsentModal'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -24,12 +24,17 @@ import {
   Toast,
   type ToastMessage,
 } from '../components/ui'
-import { authenticatedFetch, SessionError } from '../auth/session'
-import { API_PATHS, projectPaths, readData } from '../lib/api'
-import { projectAnalysis } from '../analysis/projectAnalysis'
+import { SessionError } from '../features/auth/session'
+import {
+  connectRepositories,
+  getInstallUrl,
+  listGithubRepositories,
+  resolveRepository,
+} from '../features/repositories/api'
+import { projectAnalysis } from '../features/projects/projectAnalysis'
 import { useDocumentTitle } from '../lib/useDocumentTitle'
-import { queryKeys } from '../lib/queryKeys'
-import { ONBOARDING_STEPS } from './onboardingSteps'
+import { repositoryKeys } from '../features/repositories/keys'
+import { ONBOARDING_STEPS } from '../features/projects/onboardingSteps'
 import {
   filterRepositories,
   ownerSummary,
@@ -39,72 +44,9 @@ import {
   reconcileRepositorySelection,
   SORT_LABELS,
   type RepositoryRow,
-  type SelectableRepository,
   type SortKey,
   type Visibility,
-} from './repositoryFilters'
-
-/**
- * Only the fields this screen renders are required. A backend addition must not
- * reject the whole list, and an omitted description is not a broken response.
- */
-function isRepository(value: unknown): value is SelectableRepository {
-  if (typeof value !== 'object' || value === null) return false
-  const repo = value as Record<string, unknown>
-  return (
-    typeof repo.githubRepositoryId === 'number' &&
-    typeof repo.owner === 'string' &&
-    typeof repo.name === 'string' &&
-    typeof repo.fullName === 'string' &&
-    typeof repo.private === 'boolean' &&
-    typeof repo.linked === 'boolean'
-  )
-}
-
-interface FailedInstallation {
-  accountLogin: string
-  reason: string
-}
-
-interface SelectableRepositories {
-  installations: {
-    installation?: { accountLogin?: string; accountType?: string }
-    repositories: SelectableRepository[]
-    truncated?: boolean
-  }[]
-  failedInstallations?: FailedInstallation[]
-  truncated?: boolean
-}
-
-function isFailedInstallation(value: unknown): value is FailedInstallation {
-  if (typeof value !== 'object' || value === null) return false
-  const failure = value as Record<string, unknown>
-  return (
-    typeof failure.accountLogin === 'string' &&
-    typeof failure.reason === 'string'
-  )
-}
-
-function isSelectableRepositories(
-  value: unknown,
-): value is SelectableRepositories {
-  if (typeof value !== 'object' || value === null) return false
-  const { installations, failedInstallations } = value as Record<
-    string,
-    unknown
-  >
-  return (
-    Array.isArray(installations) &&
-    installations.every((group) => {
-      if (typeof group !== 'object' || group === null) return false
-      const { repositories } = group as Record<string, unknown>
-      return Array.isArray(repositories) && repositories.every(isRepository)
-    }) &&
-    (failedInstallations === undefined ||
-      (Array.isArray(failedInstallations) &&
-        failedInstallations.every(isFailedInstallation)))
-  )
-}
+} from '../features/repositories/repositoryFilters'
 
 /**
  * The backend reports why an installation could not be read, and each reason
@@ -129,75 +71,6 @@ function failureMessage(reason: string) {
   )
 }
 
-function isConnectedList(
-  value: unknown,
-): value is { githubRepositoryId: number; repositoryId: number }[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (item) =>
-        typeof item === 'object' &&
-        item !== null &&
-        typeof (item as Record<string, unknown>).githubRepositoryId ===
-          'number' &&
-        Number.isSafeInteger((item as Record<string, unknown>).repositoryId) &&
-        Number((item as Record<string, unknown>).repositoryId) > 0,
-    )
-  )
-}
-
-function isInstallUrl(value: unknown): value is { installUrl: string } {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as Record<string, unknown>).installUrl === 'string'
-  )
-}
-
-/** GitHub reports these differently, and each one needs a different fix. */
-function resolveMessage(status: number) {
-  if (status === 400)
-    return 'URL 형식을 확인해주세요. 예: https://github.com/owner/repository'
-  if (status === 403)
-    return '조직이 앱 접근을 승인하지 않았습니다. GitHub 조직 권한을 확인해주세요.'
-  if (status === 409) return '이미 이 프로젝트에 연결된 저장소입니다.'
-  if (status === 404)
-    return '저장소를 찾을 수 없거나 접근 권한이 없습니다. 주소를 확인해주세요.'
-  return '저장소를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.'
-}
-
-/** Flattens installations; account type lives on the installation. */
-async function loadRepositories(projectId: number, signal: AbortSignal) {
-  const search = new URLSearchParams({ projectId: String(projectId) })
-  const response = await authenticatedFetch(
-    `${API_PATHS.githubRepositories}?${search}`,
-    { signal },
-  )
-  if (!response.ok) throw new Error('Repository request failed')
-  const data = await readData(
-    response,
-    isSelectableRepositories,
-    'Invalid repository list',
-  )
-  return {
-    rows: data.installations.flatMap((group) =>
-      group.repositories.map((repo): RepositoryRow => ({
-        ...repo,
-        accountLogin: group.installation?.accountLogin ?? repo.owner,
-        // GitHub's own value is "Organization"; anything else, including a
-        // missing field, is treated as a personal account.
-        organization: group.installation?.accountType === 'Organization',
-      })),
-    ),
-    failures: data.failedInstallations ?? [],
-    // GitHub caps what one request can return and there is no way to page for
-    // the rest, so a partial list has to say so; filtering would hide the gap.
-    truncated:
-      data.truncated === true ||
-      data.installations.some((it) => it.truncated === true),
-  }
-}
-
 export function ConnectReposPage() {
   useDocumentTitle('저장소 연결')
   const navigate = useNavigate()
@@ -208,8 +81,8 @@ export function ConnectReposPage() {
   const validId = Number.isInteger(id) && id > 0
 
   const listing = useQuery({
-    queryKey: queryKeys.githubRepositories(id),
-    queryFn: ({ signal }) => loadRepositories(id, signal),
+    queryKey: repositoryKeys.github(id),
+    queryFn: ({ signal }) => listGithubRepositories(id, signal),
     enabled: validId,
     // Each read asks GitHub; returning to the tab is not a reason to repeat it.
     refetchOnWindowFocus: false,
@@ -311,20 +184,7 @@ export function ConnectReposPage() {
     setResolving(true)
     setUrlError('')
     try {
-      const response = await authenticatedFetch(
-        projectPaths.resolveRepository(id),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: trimmed }),
-        },
-      )
-      if (!response.ok) throw new Error(resolveMessage(response.status))
-      const repo = await readData(
-        response,
-        isRepository,
-        '저장소 응답을 확인할 수 없습니다.',
-      )
+      const repo = await resolveRepository(id, trimmed)
       if (repo.linked) {
         setUrlError('이미 이 프로젝트에 연결된 저장소입니다.')
         return
@@ -380,26 +240,7 @@ export function ConnectReposPage() {
       const agreed = await analysis.flow.requestConsent()
       if (!agreed || analysis.flow.disposed) return
       setConnecting(true)
-      const response = await authenticatedFetch(projectPaths.repositories(id), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ githubRepositoryIds: selected }),
-      })
-      if (!response.ok)
-        throw new Error(
-          '저장소를 연결하지 못했습니다. 잠시 후 다시 시도해주세요.',
-        )
-      const connected = await readData(
-        response,
-        isConnectedList,
-        '연결 응답을 확인할 수 없습니다.',
-      )
-      if (
-        !selected.every((value) =>
-          connected.some((repo) => repo.githubRepositoryId === value),
-        )
-      )
-        throw new Error('연결 결과를 확인할 수 없습니다. 다시 시도해주세요.')
+      const connected = await connectRepositories(id, selected)
 
       projectAnalysis.queue(
         id,
@@ -424,20 +265,7 @@ export function ConnectReposPage() {
   async function openInstall() {
     setInstalling(true)
     try {
-      const search = new URLSearchParams({
-        returnTo: `/projects/${id}/repositories`,
-      })
-      const response = await authenticatedFetch(
-        `${API_PATHS.githubInstallUrl}?${search}`,
-        { method: 'POST' },
-      )
-      if (!response.ok) throw new Error('설치 주소를 발급하지 못했습니다.')
-      const data = await readData(
-        response,
-        isInstallUrl,
-        '설치 주소를 확인할 수 없습니다.',
-      )
-      window.location.href = data.installUrl
+      window.location.href = await getInstallUrl(`/projects/${id}/repositories`)
     } catch (cause) {
       if (cause instanceof SessionError && cause.status === 401) return
       setInstallError(

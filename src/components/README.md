@@ -7,6 +7,8 @@
 - `ui/`: Button, IconButton, Badge, Card, SectionHeader, StatCard, Input, Textarea, Select, Checkbox, FilterChip, Tabs, Stepper, Alert, EmptyState, Progress, Toast, Modal, Drawer, Menu, MenuItem, DataTable
 - `layout/`: Brand, AppHeader, Sidebar, AppShell
 - `../index.css`: 원본 색상, 글꼴, 그림자와 Tailwind 테마 토큰
+- `Markdown.tsx`: GitHub PR 본문용 마크다운 렌더러(GFM, 원시 HTML은 GitHub 스키마로 정리). 화면에서 `lazy`로 불러옵니다.
+- 도메인에 묶인 컴포넌트(동의 모달, 상태 배지, 로그인 버튼 등)는 `../features/<domain>/`에 있습니다.
 - `../pages/ComponentPreview.tsx`: 실행 가능한 사용 예시. 개발 모드에서 `/preview` 경로로 확인하며 프로덕션 번들에는 포함되지 않습니다.
 
 ## 사용

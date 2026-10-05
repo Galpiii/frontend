@@ -1,40 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import ts from 'typescript'
+import { loadSources } from './helpers/sources.mjs'
 
 async function api(t, handler) {
-  const directory = await mkdtemp(join(tmpdir(), 'galpi-match-test-'))
-  t.after(() => rm(directory, { recursive: true, force: true }))
-  for (const file of [
+  const load = await loadSources(t, [
     'lib/api',
-    'auth/session',
-    'lib/consentApi',
-    'lib/projectApi',
-    'lib/featureMatchApi',
-    'analysis/featureMatch',
-  ]) {
-    await mkdir(join(directory, file.split('/')[0]), { recursive: true })
-    const source = await readFile(
-      new URL(`../src/${file}.ts`, import.meta.url),
-      'utf8',
-    )
-    const { outputText } = ts.transpileModule(source, {
-      compilerOptions: {
-        target: ts.ScriptTarget.ES2023,
-        module: ts.ModuleKind.ESNext,
-      },
-    })
-    await writeFile(
-      join(directory, `${file}.mjs`),
-      (file === 'lib/api'
-        ? "import.meta.env = { VITE_API_BASE_URL: 'https://backend.example.test' };\n"
-        : '') + outputText.replaceAll(".ts'", ".mjs'"),
-    )
-  }
+    'features/auth/session',
+    'features/consent/api',
+    'features/projects/api',
+    'features/feature-match/api',
+    'features/feature-match/matchOwner',
+  ])
   const previousFetch = globalThis.fetch
   t.after(() => {
     globalThis.fetch = previousFetch
@@ -48,14 +24,7 @@ async function api(t, handler) {
       })
     return handler(path, init)
   }
-  return {
-    ...(await import(
-      pathToFileURL(join(directory, 'lib/featureMatchApi.mjs'))
-    )),
-    ...(await import(
-      pathToFileURL(join(directory, 'analysis/featureMatch.mjs'))
-    )),
-  }
+  return load('features/feature-match/api', 'features/feature-match/matchOwner')
 }
 
 const run = {

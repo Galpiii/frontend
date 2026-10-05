@@ -45,7 +45,7 @@ try {
     const result = await page.evaluate(
       async ({ method, args }) => {
         try {
-          const module = await import('/src/lib/featureReviewApi.ts')
+          const module = await import('/src/features/feature-review/api.ts')
           return { ok: true, value: await module[method](...args) }
         } catch (error) {
           return { ok: false, type: error.constructor.name }
@@ -62,7 +62,8 @@ try {
   const checkDocument = async (expected) => {
     const result = await page.evaluate(async (projectId) => {
       try {
-        const { getProjectDetail } = await import('/src/lib/projectApi.ts')
+        const { getProjectDetail } =
+          await import('/src/features/projects/api.ts')
         const project = await getProjectDetail(projectId)
         return { document: project.specDocument }
       } catch (error) {

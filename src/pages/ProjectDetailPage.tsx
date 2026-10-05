@@ -6,14 +6,17 @@ import {
   useSearchParams,
   useNavigate,
 } from 'react-router'
-import { projectAnalysis } from '../analysis/projectAnalysis'
+import { projectAnalysis } from '../features/projects/projectAnalysis'
 import { AppHeader, AppShell, Sidebar } from '../components/layout'
-import { useProjectOverview } from './useProjectOverview'
-import { useMatchedFeatures, type MatchedFeatures } from './useMatchedFeatures'
-import { ProjectRepositoryCards } from './ProjectRepositoryCards'
-import { ProjectPullRequests } from './ProjectPullRequests'
-import { ProjectSpecification } from './ProjectSpecification'
-import { displayDate } from '../lib/projectOverviewApi'
+import { useProjectOverview } from '../features/projects/useProjectOverview'
+import {
+  useMatchedFeatures,
+  type MatchedFeatures,
+} from '../features/feature-match/useMatchedFeatures'
+import { ProjectRepositoryCards } from '../features/repositories/ProjectRepositoryCards'
+import { ProjectPullRequests } from '../features/pull-requests/ProjectPullRequests'
+import { ProjectSpecification } from '../features/feature-spec/ProjectSpecification'
+import { displayDate } from '../lib/format'
 import {
   Alert,
   Button,
@@ -24,7 +27,7 @@ import {
 import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { usePolling } from '../lib/usePolling'
 import { NewProjectPage } from './NewProjectPage'
-import { resumeOnboardingStep } from './onboardingSteps'
+import { resumeOnboardingStep } from '../features/projects/onboardingSteps'
 
 export function ProjectDetailPage() {
   const { projectId } = useParams()
