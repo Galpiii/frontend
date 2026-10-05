@@ -248,6 +248,45 @@ test('an ambiguous start stays locked until a distinct server run appears', asyn
   assert.equal(owner.getSnapshot().phase, 'running')
 })
 
+test('a rejected start keeps its reason after the follow-up status read', async (t) => {
+  let posts = 0
+  const match = await api(t, (path, init) => {
+    if (path === '/projects/4/feature-match-runs/latest')
+      return error(404, 'FEATURE-MATCH-001')
+    if (path === '/projects/4')
+      return Response.json({
+        data: {
+          id: 4,
+          name: 'Galpi',
+          status: 'ACTIVE',
+          onboardingStep: 'COMPLETED',
+          lastAnalysis: null,
+          repositories: [],
+          specDocument: {
+            specDocumentId: 3,
+            fileName: 'spec.pdf',
+            extractionStatus: 'COMPLETED',
+          },
+        },
+      })
+    if (path === '/projects/4/feature-match-runs' && init.method === 'POST') {
+      posts++
+      return error(403, 'CONSENT-001')
+    }
+    throw new Error(`unexpected endpoint ${path}`)
+  })
+  const owner = match.getMatchOwner(4)
+  await owner.refresh()
+  await owner.start(3)
+  assert.equal(posts, 1)
+  assert.equal(owner.getSnapshot().phase, 'idle')
+  assert.match(owner.getSnapshot().startError, /동의/)
+  await owner.refresh()
+  assert.match(owner.getSnapshot().startError, /동의/)
+  await owner.start(3)
+  assert.equal(posts, 2)
+})
+
 test('PR related features are found in the details of features with evidence in its repository', async (t) => {
   const requests = []
   const summary = Object.fromEntries(

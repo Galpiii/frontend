@@ -11,6 +11,9 @@ type Snapshot = {
   phase: 'loading' | 'idle' | 'sending' | 'running' | 'unknown' | 'read-error'
   run: MatchRun | null
   message: string
+  /** A rejected start, kept apart from `message` so the follow-up status read
+   * cannot erase it. Cleared only when the next start begins. */
+  startError: string
   revision: number
 }
 
@@ -19,6 +22,7 @@ class MatchOwner {
     phase: 'loading',
     run: null,
     message: '',
+    startError: '',
     revision: 0,
   }
   private listeners = new Set<() => void>()
@@ -105,7 +109,11 @@ class MatchOwner {
   async start(specDocumentId: number) {
     if (this.state.phase !== 'idle' || this.inFlight) return
     const baseline = this.state.run?.featureMatchRunId ?? null
-    this.publish({ phase: 'sending', message: '기능대조를 요청하고 있습니다.' })
+    this.publish({
+      phase: 'sending',
+      message: '기능대조를 요청하고 있습니다.',
+      startError: '',
+    })
     try {
       const project = await getProjectDetail(this.projectId)
       if (
@@ -137,13 +145,15 @@ class MatchOwner {
         this.uncertainBaseline = baseline
         this.publish({ phase: 'unknown', message: error.message })
       } else {
-        const message =
-          error instanceof MatchApiError && error.code === 'SOURCE_CHANGED'
-            ? '명세서 또는 실행 상태가 바뀌었습니다. 최신 상태를 확인해주세요.'
-            : error instanceof MatchApiError && error.code === 'CONSENT-001'
-              ? 'AI 데이터 전송 동의를 다시 확인해주세요.'
-              : '기능대조를 시작하지 못했습니다. 서버 상태를 확인해주세요.'
-        this.publish({ phase: 'read-error', message })
+        // The phase comes from the status read below; only the reason stays.
+        this.publish({
+          startError:
+            error instanceof MatchApiError && error.code === 'SOURCE_CHANGED'
+              ? '명세서 또는 실행 상태가 바뀌었습니다. 최신 상태를 확인해주세요.'
+              : error instanceof MatchApiError && error.code === 'CONSENT-001'
+                ? 'AI 데이터 전송 동의를 다시 확인해주세요.'
+                : '기능대조를 시작하지 못했습니다. 서버 상태를 확인해주세요.',
+        })
       }
     } finally {
       await this.refreshAfterStart()

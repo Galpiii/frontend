@@ -783,7 +783,7 @@ function UnmatchedModal({
                 className="border-b border-line last:border-b-0"
               >
                 <Link
-                  to={`/project/${projectId}?tab=prs&pr=${pr.pullRequestId}`}
+                  to={`/projects/${projectId}?tab=prs&pr=${pr.pullRequestId}`}
                   onClick={onClose}
                   className="block px-4 py-3 hover:bg-subtle"
                 >
@@ -853,6 +853,7 @@ export function ProjectFeatureMatch({
   const [search, setSearch] = useState(q)
   const [resultResponse, setResultResponse] = useState<{
     key: string
+    view: string
     data: MatchResults
   } | null>(null)
   const [resultError, setResultError] = useState<{
@@ -861,6 +862,7 @@ export function ProjectFeatureMatch({
   } | null>(null)
   const [allResponse, setAllResponse] = useState<{
     key: string
+    view: string
     data: MatchResults
   } | null>(null)
   const [actionError, setActionError] = useState('')
@@ -876,29 +878,25 @@ export function ProjectFeatureMatch({
     state.run &&
     state.run.specDocumentId !== project.specDocument?.specDocumentId,
   )
-  const requestKey = JSON.stringify([
+  // A view is what the user asked to see; a request is one read of it. A
+  // reload of the same view (localRevision) keeps the previous results on
+  // screen, so the evidence panel and its notices survive a PR (dis)connect.
+  const allView = JSON.stringify([
     project.id,
     runId,
     runStatus,
     project.specDocument?.specDocumentId,
-    localRevision,
-    filter,
-    repoId,
-    q,
   ])
-  const results =
-    resultResponse?.key === requestKey ? resultResponse.data : null
-  const allKey = JSON.stringify([
-    project.id,
-    runId,
-    runStatus,
-    project.specDocument?.specDocumentId,
-    localRevision,
-  ])
+  const view = JSON.stringify([allView, filter, repoId, q])
+  const requestKey = JSON.stringify([view, localRevision])
+  const allKey = JSON.stringify([allView, localRevision])
+  const results = resultResponse?.view === view ? resultResponse.data : null
+  const reloadingResults =
+    results !== null && resultResponse?.key !== requestKey
   const allResults =
     filter === 'ALL' && !repoId && !q
       ? results
-      : allResponse?.key === allKey
+      : allResponse?.view === allView
         ? allResponse.data
         : null
   const error = resultError?.key === requestKey ? resultError.message : ''
@@ -928,7 +926,7 @@ export function ProjectFeatureMatch({
             message: '대조 실행이 변경되었습니다. 다시 확인해주세요.',
           })
         } else {
-          setResultResponse({ key: requestKey, data })
+          setResultResponse({ key: requestKey, view, data })
           setResultError(null)
         }
       })
@@ -954,6 +952,7 @@ export function ProjectFeatureMatch({
     repoId,
     q,
     requestKey,
+    view,
   ])
   useEffect(() => {
     if (
@@ -967,7 +966,7 @@ export function ProjectFeatureMatch({
     void getMatchResults(project.id, 'ALL', undefined, '', controller.signal)
       .then((data) => {
         if (!controller.signal.aborted && data.featureMatchRunId === runId)
-          setAllResponse({ key: allKey, data })
+          setAllResponse({ key: allKey, view: allView, data })
       })
       .catch(() => {})
     return () => controller.abort()
@@ -981,6 +980,7 @@ export function ProjectFeatureMatch({
     repoId,
     q,
     allKey,
+    allView,
   ])
   const update = (patch: Record<string, string>) => {
     const next = new URLSearchParams(latestParams.current)
@@ -1118,6 +1118,7 @@ export function ProjectFeatureMatch({
             {state.message}
           </Alert>
         )}
+        {state.startError && <Alert tone="warning">{state.startError}</Alert>}
         {state.phase === 'loading' && (
           <p role="status" className="text-[13px] text-muted">
             서버의 최신 실행 상태를 확인하고 있습니다…
@@ -1285,6 +1286,7 @@ export function ProjectFeatureMatch({
                   <Button
                     size="sm"
                     variant="secondary"
+                    loading={reloadingResults}
                     onClick={() => setLocalRevision((value) => value + 1)}
                   >
                     결과 새로고침
