@@ -42,5 +42,10 @@ export function useProjectOverview(projectId: number, project?: ProjectDetail) {
       window.clearTimeout(timer)
     }
   }, [projectId, repositoryKey, runId, runStatus, attempt])
-  return { data, loading, refresh: () => setAttempt((v) => v + 1) }
+  return {
+    data,
+    loading,
+    refreshKey: attempt,
+    refresh: () => setAttempt((v) => v + 1),
+  }
 }

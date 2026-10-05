@@ -9,6 +9,7 @@ import {
 import { projectAnalysis } from '../analysis/projectAnalysis'
 import { AppHeader, AppShell, Sidebar } from '../components/layout'
 import { useProjectOverview } from './useProjectOverview'
+import { useMatchedFeatures, type MatchedFeatures } from './useMatchedFeatures'
 import { ProjectRepositoryCards } from './ProjectRepositoryCards'
 import { ProjectPullRequests } from './ProjectPullRequests'
 import { ProjectSpecification } from './ProjectSpecification'
@@ -26,16 +27,32 @@ export function ProjectDetailPage() {
   return <ProjectHome key={id} projectId={id} />
 }
 
-function specificationFooter(project?: {
-  specDocument: { extractionStatus?: string } | null
-}) {
-  const status = project?.specDocument?.extractionStatus
-  if (!project?.specDocument) return '기능명세서 미등록'
-  if (status === 'COMPLETED') return '기능대조 · 명세서 준비됨'
-  if (status === 'FAILED') return '기능대조 · 추출 실패'
-  if (status === 'PENDING' || status === 'PROCESSING')
-    return '기능대조 · 기능 추출 중'
-  return '기능대조 · 상태 확인 필요'
+const matchedFeatureHints: Record<
+  Exclude<MatchedFeatures['state'], 'READY' | 'IN_PROGRESS'>,
+  string
+> = {
+  NO_SPEC: '기능명세서 미등록',
+  NO_RUN: '기능대조 미실행',
+  FAILED: '기능대조 실패 · 다시 실행 필요',
+  STALE: '명세서 변경 · 다시 대조 필요',
+  ERROR: '대조 현황을 불러오지 못함',
+}
+
+function matchedFeatureStat(data: MatchedFeatures | null) {
+  if (!data) return { value: '—', hint: '대조 현황 확인 중' }
+  if (data.state === 'READY')
+    return {
+      value: (
+        <>
+          {data.matched}{' '}
+          <span className="text-sm font-normal text-muted">/ {data.total}</span>
+        </>
+      ),
+      hint: '관련 PR이 확인된 기능',
+    }
+  if (data.state === 'IN_PROGRESS')
+    return { value: '—', hint: `기능대조 진행 중 · ${data.progressPercent}%` }
+  return { value: '—', hint: matchedFeatureHints[data.state] }
 }
 
 function ProjectHome({ projectId }: { projectId: number }) {
@@ -53,6 +70,12 @@ function ProjectHome({ projectId }: { projectId: number }) {
         ? 'match'
         : 'home'
   const overview = useProjectOverview(projectId, project)
+  const matchedFeatures = matchedFeatureStat(
+    useMatchedFeatures(
+      tab === 'home' ? project : undefined,
+      overview.refreshKey,
+    ),
+  )
   const openSpec = () => navigate(`/project/${projectId}?tab=match`)
   useDocumentTitle(project?.name ?? '프로젝트')
   useEffect(() => {
@@ -78,13 +101,13 @@ function ProjectHome({ projectId }: { projectId: number }) {
   const failedRepos =
     overview.data?.overview?.repositories.filter((repo) => repo.failedCount > 0)
       .length ?? 0
-  const showFailures =
+  const settled =
     !requesting &&
     !unknown &&
     !rejected &&
     !state.awaitingRun &&
-    !['QUEUED', 'RUNNING'].includes(status ?? '') &&
-    failedRepos > 0
+    !['QUEUED', 'RUNNING'].includes(status ?? '')
+  const showFailures = settled && failedRepos > 0
   const title = requesting
     ? '분석 요청 중'
     : unknown
@@ -161,13 +184,14 @@ function ProjectHome({ projectId }: { projectId: number }) {
                   {repo.fullName}
                 </p>
               ))}
-              <p>{specificationFooter(project)}</p>
             </div>
           }
         />
       }
     >
-      <div className="flex max-w-[1220px] flex-col gap-5">
+      <div
+        className={`flex flex-col gap-5 ${tab === 'match' ? 'max-w-[1440px]' : 'max-w-[1220px]'}`}
+      >
         {tab === 'prs' && project ? (
           <ProjectPullRequests
             project={project}
@@ -230,13 +254,10 @@ function ProjectHome({ projectId }: { projectId: number }) {
                 >
                   PR 목록 열기 →
                 </Button>
-              ) : !requesting &&
-                !unknown &&
-                !rejected &&
-                !state.awaitingRun &&
-                !['QUEUED', 'RUNNING'].includes(status ?? '') &&
-                !project?.specDocument ? (
+              ) : settled && !project?.specDocument ? (
                 <Button onClick={openSpec}>명세서 등록하기 →</Button>
+              ) : settled ? (
+                <Button onClick={openSpec}>기능대조 보기 →</Button>
               ) : (
                 <Button
                   variant="secondary"
@@ -288,8 +309,8 @@ function ProjectHome({ projectId }: { projectId: number }) {
                   />
                   <StatCard
                     label="대조된 기능"
-                    value="—"
-                    hint="기능대조 준비 중"
+                    value={matchedFeatures.value}
+                    hint={matchedFeatures.hint}
                   />
                 </div>
                 {overview.loading && !overview.data && (
