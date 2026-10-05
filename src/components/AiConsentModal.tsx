@@ -19,7 +19,9 @@ function ConsentChoices({
         label={
           flow.consentPurpose === 'feature-spec'
             ? '[필수] 기능명세서의 외부 AI 처리에 동의합니다.'
-            : '[필수] 외부 AI를 이용한 Git 작업 데이터 처리에 동의합니다.'
+            : flow.consentPurpose === 'feature-match'
+              ? '[필수] 기능명세서와 Git 작업 데이터의 외부 AI 처리에 동의합니다.'
+              : '[필수] 외부 AI를 이용한 Git 작업 데이터 처리에 동의합니다.'
         }
         checked={ai}
         disabled={state.phase !== 'consent'}
@@ -57,6 +59,7 @@ export function AiConsentModal({
 }) {
   const starting = state.phase === 'starting'
   const featureSpec = flow.consentPurpose === 'feature-spec'
+  const featureMatch = flow.consentPurpose === 'feature-match'
   return (
     <Modal
       open={state.phase !== 'idle' && state.phase !== 'checking'}
@@ -91,7 +94,9 @@ export function AiConsentModal({
                 : flow.consentOnly
                   ? featureSpec
                     ? '동의하고 명세서 전송'
-                    : '동의하고 저장소 연결'
+                    : featureMatch
+                      ? '동의하고 기능대조 준비'
+                      : '동의하고 저장소 연결'
                   : '동의하고 분석 시작'}
             </Button>
           )}
@@ -113,7 +118,9 @@ export function AiConsentModal({
           <p className="text-sm text-muted">
             {featureSpec
               ? '선택한 PDF를 OpenAI에 전송해 기능 항목을 추출합니다. 아직 파일을 전송하거나 분석을 시작하지 않았습니다.'
-              : '아직 저장소 연결과 분석을 시작하지 않았습니다. 동의 후 진행합니다.'}
+              : featureMatch
+                ? '기능과 PR 정보를 OpenAI에 전송해 관련 근거를 찾습니다. 아직 기능대조를 시작하지 않았습니다.'
+                : '아직 저장소 연결과 분석을 시작하지 않았습니다. 동의 후 진행합니다.'}
           </p>
         )}
         {starting && (

@@ -31,7 +31,7 @@ export class AnalysisFlow {
   }
   private active: {
     id: number | null
-    purpose: 'repositories' | 'feature-spec'
+    purpose: 'repositories' | 'feature-spec' | 'feature-match'
     controller: AbortController
     resolve: (run: Run | null) => void
     reject: (error: unknown) => void
@@ -56,7 +56,7 @@ export class AnalysisFlow {
   }
 
   async requestConsent(
-    purpose: 'repositories' | 'feature-spec' = 'repositories',
+    purpose: 'repositories' | 'feature-spec' | 'feature-match' = 'repositories',
   ): Promise<boolean> {
     return (await this.begin(null, purpose)) !== null
   }
@@ -67,7 +67,7 @@ export class AnalysisFlow {
 
   private begin(
     id: number | null,
-    purpose: 'repositories' | 'feature-spec',
+    purpose: 'repositories' | 'feature-spec' | 'feature-match',
   ): Promise<Run | null> {
     if (this.active || this.disposed) return Promise.resolve(null)
     return new Promise((resolve, reject) => {
