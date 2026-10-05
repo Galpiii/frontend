@@ -10,6 +10,7 @@ export interface DialogProps {
   footer?: ReactNode
   closeDisabled?: boolean
   closeOnBackdrop?: boolean
+  size?: 'default' | 'wide'
 }
 function Overlay({
   open,
@@ -20,6 +21,7 @@ function Overlay({
   footer,
   closeDisabled = false,
   closeOnBackdrop = true,
+  size = 'default',
   drawer = false,
 }: DialogProps & { drawer?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -66,7 +68,10 @@ function Overlay({
         'fixed border border-line bg-surface p-0 text-ink shadow-dialog',
         drawer
           ? 'inset-y-0 left-auto right-0 m-0 h-dvh max-h-dvh w-[620px] max-w-[100vw]'
-          : 'inset-0 m-auto max-h-[90dvh] w-[520px] max-w-[calc(100vw-32px)] rounded-[14px]',
+          : cn(
+              'inset-0 m-auto max-h-[90dvh] max-w-[calc(100vw-32px)] rounded-[14px]',
+              size === 'wide' ? 'w-[860px]' : 'w-[520px]',
+            ),
       )}
     >
       <div
