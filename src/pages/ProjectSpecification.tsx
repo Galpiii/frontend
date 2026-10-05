@@ -415,6 +415,7 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
   const busy = request.phase === 'requesting'
   const uncertain = request.phase === 'accepted' || request.phase === 'unknown'
   const [dragging, setDragging] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [message, setMessage] = useState('')
   const [messageTone, setMessageTone] = useState<Tone>('danger')
   const stage = getFeatureSpecStage(project.specDocument)
@@ -503,6 +504,21 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
     await projectAnalysis.refresh(project.id)
   }
 
+  /** GET only: it never resends, but lets the user release an uncertain lock. */
+  async function checkUpload() {
+    setChecking(true)
+    setMessage('')
+    try {
+      await featureSpecUpload.check(project.id)
+      await projectAnalysis.refresh(project.id)
+    } catch {
+      setMessage('서버 상태를 확인하지 못했습니다. 잠시 후 다시 확인해주세요.')
+      setMessageTone('warning')
+    } finally {
+      setChecking(false)
+    }
+  }
+
   const uploader = (
     <UploadPanel
       file={file}
@@ -527,19 +543,42 @@ export function ProjectSpecification({ project }: { project: ProjectDetail }) {
     <section className="flex flex-col gap-4">
       <SpecHeader stage={stage} view={view} />
       <ViewSelector value={view} onChange={setView} />
-      {(message || request.message) && (
+      {message && <Alert tone={messageTone}>{message}</Alert>}
+      {request.message && (
         <Alert
           tone={
-            message
-              ? messageTone
-              : request.phase === 'rejected'
-                ? 'danger'
-                : request.phase === 'unknown'
-                  ? 'warning'
-                  : 'info'
+            request.phase === 'rejected'
+              ? 'danger'
+              : request.phase === 'unknown'
+                ? 'warning'
+                : 'info'
+          }
+          action={
+            uncertain && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={checking}
+                  onClick={() => void checkUpload()}
+                >
+                  서버 상태 확인
+                </Button>
+                {request.phase === 'unknown' && request.checked && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={checking}
+                    onClick={() => featureSpecUpload.acknowledge(project.id)}
+                  >
+                    확인했습니다, 다시 업로드
+                  </Button>
+                )}
+              </div>
+            )
           }
         >
-          {message || request.message}
+          {request.message}
         </Alert>
       )}
       {view === 'results' ? (

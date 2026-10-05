@@ -24,9 +24,19 @@ export class PrRetryStore {
     this.states.set(id, state)
     this.listeners.forEach((l) => l())
   }
+  /**
+   * Called after an explicit status check. With nothing pending no retry can
+   * still be in flight, so a finished or an uncertain request both unlock.
+   */
   allowAfterStatus(id: number, pendingCount: number) {
-    if (this.get(id).phase === 'success' && pendingCount === 0)
-      this.set(id, idle)
+    const { phase } = this.get(id)
+    if (phase !== 'success' && phase !== 'unknown') return
+    if (pendingCount === 0) this.set(id, idle)
+    else if (phase === 'unknown')
+      this.set(id, {
+        phase,
+        message: `대기 중인 분석 ${pendingCount}건이 끝난 뒤 다시 요청할 수 있습니다.`,
+      })
   }
   async request(id: number, repositoryId?: number) {
     if (['requesting', 'unknown', 'success'].includes(this.get(id).phase))
@@ -53,7 +63,7 @@ export class PrRetryStore {
             ? '현재 AI 전송 동의가 필요합니다. 다시 요청하면 동의를 확인합니다.'
             : rejected
               ? '재분석 요청이 거절되었습니다. 다시 시도할 수 있습니다.'
-              : '접수 여부가 불확실합니다. 다시 전송하지 않고 상태를 조회해주세요.',
+              : '접수 여부가 불확실합니다. 다시 전송하지 않고 상태를 조회해주세요. 대기 중인 분석이 없으면 상태 확인 후 다시 요청할 수 있습니다.',
       })
     }
   }

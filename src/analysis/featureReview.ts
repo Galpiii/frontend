@@ -71,6 +71,17 @@ class FeatureReviewOwner {
       revision: this.state.revision + 1,
     })
   }
+  /**
+   * A read cannot prove an uncertain mutation finished (there is no operation
+   * ID), so a GET never lifts the lock. Only the user can, after a successful
+   * read has put the latest list in front of them.
+   */
+  acknowledge() {
+    if (this.state.phase !== 'uncertain') return false
+    this.uncertain = false
+    this.publish({ phase: 'idle', notice: null })
+    return true
+  }
   refresh = async () => {
     if (this.state.phase === 'sending' || this.state.phase === 'checking')
       return

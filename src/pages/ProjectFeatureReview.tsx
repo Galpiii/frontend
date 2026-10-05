@@ -569,18 +569,31 @@ export function ProjectFeatureReview({
         <Alert
           tone="warning"
           action={
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void owner.refresh()}
-            >
-              최신 목록 확인
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void owner.refresh()}
+              >
+                최신 목록 확인
+              </Button>
+              {mutation.phase === 'uncertain' && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  // Unlock only once the list below is the one just read.
+                  disabled={loadedRevision !== mutation.revision || !!error}
+                  onClick={() => owner.acknowledge()}
+                >
+                  확인했습니다, 다시 편집
+                </Button>
+              )}
+            </div>
           }
         >
           {mutation.phase === 'read-error'
             ? '최신 목록과 요약을 확인하지 못했습니다. 확인 전까지 변경을 잠시 막습니다.'
-            : '목록을 조회했지만 이전 요청의 완료 여부는 확정할 수 없습니다. 중복 처리를 막기 위해 추가 변경을 잠시 막습니다.'}
+            : '목록을 조회했지만 이전 요청의 완료 여부는 확정할 수 없어 추가 변경을 막았습니다. 아래 목록에 변경이 반영됐는지 확인한 뒤 잠금을 해제해주세요. 반영되지 않은 변경을 다시 보내면 늦게 처리된 이전 요청과 중복될 수 있습니다.'}
         </Alert>
       )}
 

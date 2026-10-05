@@ -10,6 +10,8 @@ type State = {
   phase: 'idle' | 'requesting' | 'accepted' | 'unknown' | 'rejected'
   previousId?: number
   message?: string
+  /** An explicit status read found no new document after this request. */
+  checked?: boolean
 }
 const idle: State = { phase: 'idle' }
 const defaultApi = {
@@ -123,11 +125,29 @@ export class FeatureSpecUploadStore {
     ) {
       this.set(id, {
         ...before,
+        checked: true,
         message:
-          '새 문서를 아직 확인하지 못했습니다. 요청이 늦게 처리될 수 있어 다시 전송하지 않습니다.',
+          before.phase === 'unknown'
+            ? '서버에서 새 문서를 확인하지 못했습니다. 요청이 늦게 처리될 수 있어 자동으로 다시 전송하지 않습니다. 기존 문서 상태를 확인했다면 잠금을 해제하고 다시 업로드할 수 있습니다.'
+            : '새 문서를 아직 확인하지 못했습니다. 요청이 늦게 처리될 수 있어 다시 전송하지 않습니다.',
       })
     }
     return current
+  }
+  /**
+   * A read cannot prove an uncertain request was dropped, so only the user may
+   * lift the lock, and only after `check` has shown them the server's state.
+   * An accepted request is not covered: its new document will appear.
+   */
+  acknowledge(id: number) {
+    const state = this.get(id)
+    if (state.phase !== 'unknown' || !state.checked) return false
+    this.set(id, {
+      phase: 'idle',
+      message:
+        '다시 업로드할 수 있습니다. 이전 요청이 늦게 처리되면 문서가 한 번 더 바뀔 수 있습니다.',
+    })
+    return true
   }
 }
 
