@@ -16,7 +16,7 @@ async function api(t, handler) {
     globalThis.fetch = previousFetch
   })
   globalThis.fetch = async (input, init) => {
-    const url = new URL(input)
+    const url = new URL(input, 'https://frontend.example.test')
     const path = url.pathname + url.search
     if (path === '/auth/refresh')
       return Response.json({

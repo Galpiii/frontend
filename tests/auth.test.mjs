@@ -27,6 +27,8 @@ const tokenBody = {
   },
 }
 
+const requestUrl = (url) => new URL(url, 'https://frontend.example.test')
+
 test('callback code is decoded and scrubbed before exchange; returnTo is not followed', async (t) => {
   const { consumeCallback } = await modules(t)
   let replaced
@@ -56,10 +58,11 @@ test('exchange sends credentials and stores bearer only for authenticated API ca
   const results = await Promise.all([session, session])
   assert.ok(results.every((result) => result.authenticated))
   assert.equal(requests.length, 1)
-  assert.equal(requests[0].url, 'https://backend.example.test/auth/token')
+  assert.equal(requests[0].url, '/auth/token')
   assert.equal(requests[0].init.credentials, 'include')
   assert.deepEqual(JSON.parse(requests[0].init.body), { code: 'one-time-code' })
   await authenticatedFetch('/projects', { method: 'POST' })
+  assert.equal(requests[1].url, 'https://backend.example.test/projects')
   assert.equal(
     requests[1].init.headers.get('Authorization'),
     'Bearer test-access-token',
@@ -88,7 +91,7 @@ test('refresh is deduplicated and includes the required CSRF header', async (t) 
   })
   await Promise.all([restoreSession(), restoreSession()])
   assert.equal(requests.length, 1)
-  assert.equal(requests[0].url, 'https://backend.example.test/auth/refresh')
+  assert.equal(requests[0].url, '/auth/refresh')
   assert.equal(requests[0].init.headers['X-Galpi-Request'], 'true')
   assert.equal(requests[0].init.credentials, 'include')
 })
@@ -406,7 +409,7 @@ test('explicit session verification rejects a deleted refresh cookie despite a v
   const calls = []
   let expired = 0
   t.mock.method(globalThis, 'fetch', async (url) => {
-    calls.push(new URL(url).pathname)
+    calls.push(requestUrl(url).pathname)
     if (url.endsWith('/auth/token')) return Response.json(tokenBody)
     if (url.endsWith('/auth/refresh'))
       return new Response(null, { status: 401 })
@@ -431,7 +434,7 @@ test('explicit session verification refreshes before sending a mutation exactly 
   const { exchangeLoginCode, authenticatedFetch } = await modules(t)
   const calls = []
   t.mock.method(globalThis, 'fetch', async (url, init) => {
-    calls.push(new URL(url).pathname)
+    calls.push(requestUrl(url).pathname)
     if (url.endsWith('/auth/token')) return Response.json(tokenBody)
     if (url.endsWith('/auth/refresh'))
       return Response.json({

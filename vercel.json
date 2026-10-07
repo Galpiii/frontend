@@ -1,3 +1,13 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/auth/token",
+      "destination": "https://galpi-server.duckdns.org/auth/token"
+    },
+    {
+      "source": "/auth/refresh",
+      "destination": "https://galpi-server.duckdns.org/auth/refresh"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

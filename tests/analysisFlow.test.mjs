@@ -694,7 +694,7 @@ test('overview uses filtered server totals for completed counts, not total minus
   const { exchangeLoginCode, loadOverview } = await modules(t)
   const paths = []
   t.mock.method(globalThis, 'fetch', async (url) => {
-    const u = new URL(url)
+    const u = new URL(url, 'https://frontend.example.test')
     paths.push(u.pathname + u.search)
     if (u.pathname === '/auth/token')
       return Response.json({
@@ -748,7 +748,7 @@ test('overview uses filtered server totals for completed counts, not total minus
 test('overview partial failures preserve available facts and never report missing counts as zero', async (t) => {
   const { exchangeLoginCode, loadOverview } = await modules(t)
   t.mock.method(globalThis, 'fetch', async (url) => {
-    const u = new URL(url)
+    const u = new URL(url, 'https://frontend.example.test')
     if (u.pathname === '/auth/token')
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
@@ -782,7 +782,7 @@ test('PR filters and pagination use the existing endpoint and reject unsafe exte
   const { exchangeLoginCode, getPrPage, githubUrl, displayDate } =
     await modules(t)
   t.mock.method(globalThis, 'fetch', async (url) => {
-    const u = new URL(url)
+    const u = new URL(url, 'https://frontend.example.test')
     if (u.pathname === '/auth/token')
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
@@ -956,7 +956,7 @@ test('PR detail and failed-only retry use their dedicated endpoints', async (t) 
   } = await modules(t)
   let reject = false
   t.mock.method(globalThis, 'fetch', async (url, init) => {
-    const u = new URL(url)
+    const u = new URL(url, 'https://frontend.example.test')
     if (u.pathname === '/auth/token')
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
@@ -1057,7 +1057,7 @@ test('feature spec upload uses the existing endpoint and never hides an uncertai
   let outcome = 'accepted'
   const requests = []
   t.mock.method(globalThis, 'fetch', async (url, init) => {
-    const path = new URL(url).pathname
+    const path = new URL(url, 'https://frontend.example.test').pathname
     if (path === '/auth/token')
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
@@ -1091,7 +1091,7 @@ test('feature review reads server groups, summary counts and exact filters', asy
     await modules(t)
   const paths = []
   t.mock.method(globalThis, 'fetch', async (url) => {
-    const u = new URL(url)
+    const u = new URL(url, 'https://frontend.example.test')
     if (u.pathname === '/auth/token')
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
@@ -1210,7 +1210,7 @@ test('feature review mutations use the committed contracts and classify uncertai
   const calls = []
   let outcome = 200
   t.mock.method(globalThis, 'fetch', async (url, init) => {
-    const path = new URL(url).pathname
+    const path = new URL(url, 'https://frontend.example.test').pathname
     if (path === '/auth/token')
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
@@ -1279,7 +1279,10 @@ test('replacement uses PUT multipart and never falls back to POST on rejection',
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
       })
     calls.push(init)
-    assert.equal(new URL(url).pathname, '/projects/7/feature-specs')
+    assert.equal(
+      new URL(url, 'https://frontend.example.test').pathname,
+      '/projects/7/feature-specs',
+    )
     return new Response(null, { status })
   })
   await exchangeLoginCode('fixture')
@@ -1450,7 +1453,9 @@ test('review owner survives unsubscribe and locks until both reconciliation read
   const { getFeatureReviewOwner, exchangeLoginCode } = await modules(t)
   const read = deferred()
   t.mock.method(globalThis, 'fetch', async (url) => {
-    if (new URL(url).pathname === '/auth/token')
+    if (
+      new URL(url, 'https://frontend.example.test').pathname === '/auth/token'
+    )
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
       })
@@ -1514,7 +1519,9 @@ test('an uncertain review lock lifts only by explicit acknowledgement after a su
   } = await modules(t)
   let fail = false
   t.mock.method(globalThis, 'fetch', async (url) => {
-    if (new URL(url).pathname === '/auth/token')
+    if (
+      new URL(url, 'https://frontend.example.test').pathname === '/auth/token'
+    )
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
       })
@@ -1564,7 +1571,9 @@ test('review reconciliation failures block writes; GET recovery does not resolve
   let fail = true
   let reads = 0
   t.mock.method(globalThis, 'fetch', async (url) => {
-    if (new URL(url).pathname === '/auth/token')
+    if (
+      new URL(url, 'https://frontend.example.test').pathname === '/auth/token'
+    )
       return Response.json({
         data: { accessToken: 'fixture', tokenType: 'Bearer', expiresIn: 3600 },
       })

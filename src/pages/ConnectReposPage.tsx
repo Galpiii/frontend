@@ -9,7 +9,7 @@ import {
   useParams,
   useSearchParams,
 } from 'react-router'
-import { AppHeader, AppShell } from '../components/layout'
+import { AppHeader, AppShell, BrandMark } from '../components/layout'
 import {
   Alert,
   Badge,
@@ -411,6 +411,7 @@ export function ConnectReposPage() {
         ) : empty ? (
           <EmptyState
             level={2}
+            icon={<BrandMark />}
             title="연결할 수 있는 저장소가 없습니다"
             description="GitHub App이 설치되지 않았거나 접근 가능한 저장소가 없습니다. App을 설치하면 선택할 수 있는 저장소가 나타납니다."
             action={

@@ -59,7 +59,9 @@ function isAccessToken(value: unknown): value is AccessToken {
 }
 
 async function receiveToken(path: string, code?: string) {
-  const response = await fetch(getApiUrl(path), {
+  // The host-only refresh cookie must be set and read on the frontend origin.
+  // Vercel (and the local Vite proxy) forwards these two paths to the backend.
+  const response = await fetch(path, {
     method: 'POST',
     credentials: 'include',
     cache: 'no-store',

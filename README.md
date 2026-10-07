@@ -26,6 +26,8 @@ npm run dev
 
 Vite는 환경 변수를 **빌드 시점에 번들에 박아 넣습니다.** 배포 대상이 바뀌면 값을 바꾸고 다시 빌드해야 합니다. 토큰이나 비밀값은 프론트엔드 환경 변수에 두지 마세요.
 
+로그인 코드 교환(`POST /auth/token`)과 세션 갱신(`POST /auth/refresh`)은 브라우저가 같은 출처의 경로로 요청합니다. 개발 서버는 `VITE_API_BASE_URL`로, 운영 Vercel은 [`vercel.json`](vercel.json)의 외부 rewrite로 이 두 요청을 백엔드에 전달합니다. GitHub OAuth 시작·콜백과 일반 API 요청은 기존 백엔드 주소를 사용합니다. 백엔드 주소를 바꿀 때는 환경 변수와 Vercel rewrite 목적지를 함께 바꾸세요.
+
 ## 스크립트
 
 | 명령                   | 설명                                |
@@ -69,6 +71,7 @@ tests/         모듈 단위 테스트 (helpers/sources.mjs로 src 모듈을 변
 ## 배포
 
 - 프로덕션 호스팅은 SPA 라우트(`/projects`, `/auth/callback` 등)에 대해 `index.html`을 서빙해야 합니다.
+- `/auth/token`, `/auth/refresh`는 SPA fallback보다 먼저 백엔드로 프록시해야 합니다. 백엔드 refresh 쿠키는 `Domain` 없이 `Path=/auth`여야 프론트 출처에서 발급하고 다시 보낼 수 있습니다.
 - 백엔드의 CORS 허용 origin, 콜백 URL, 프론트엔드 리다이렉트, 쿠키 `Secure`/`SameSite` 설정을 배포 환경에 맞게 구성해야 합니다.
 
 ## 기여
