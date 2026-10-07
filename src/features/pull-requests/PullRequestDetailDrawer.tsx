@@ -5,6 +5,9 @@ import { PrStatusBadge } from './PrStatusBadge'
 import { getPullRequestFeatures } from '../feature-match/api'
 import { changeTypes, failureReasons } from './api'
 import { displayDate, githubUrl } from '../../lib/format'
+import { getCollectionNotices } from '../../lib/collectionNotices'
+import { CollectionNotice } from '../../components/CollectionNotice'
+import { PullRequestExcludedFiles } from './CollectionExcludedFiles'
 import { matchKeys } from '../feature-match/keys'
 import { usePullRequestDetail } from './usePullRequestDetail'
 const relatedFeatureNotices = {
@@ -137,6 +140,7 @@ export function PullRequestDetailDrawer({
 }) {
   const { data, error, query } = usePullRequestDetail(id, repositoryIds)
   const url = data && githubUrl(data.htmlUrl)
+  const collectionNotices = getCollectionNotices(data?.incompleteReasons)
   return (
     <Drawer
       open
@@ -258,10 +262,10 @@ export function PullRequestDetailDrawer({
               참고 정보입니다.
             </p>
           </Card>
-          {!!data.incompleteReasons.length && (
-            <Alert tone="warning">
-              수집 근거 제한: {data.incompleteReasons.join(' · ')}
-            </Alert>
+          {!!collectionNotices.length && (
+            <CollectionNotice notices={collectionNotices}>
+              <PullRequestExcludedFiles detail={data} />
+            </CollectionNotice>
           )}
           <RelatedFeatures
             projectId={projectId}
