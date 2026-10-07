@@ -14,6 +14,9 @@ import { projectAnalysis } from '../projects/projectAnalysis'
 import type { ProjectDetail, LinkedRepository } from '../projects/api'
 import type { loadOverview } from '../projects/overviewApi'
 import { displayDate } from '../../lib/format'
+import { getCollectionNotices } from '../../lib/collectionNotices'
+import { CollectionNotice } from '../../components/CollectionNotice'
+import { RepositoryExcludedFiles } from '../pull-requests/CollectionExcludedFiles'
 
 const statuses: Record<string, [string, Tone]> = {
   PENDING: ['수집 대기', 'info'],
@@ -22,10 +25,6 @@ const statuses: Record<string, [string, Tone]> = {
   FAILED: ['수집 실패', 'danger'],
   CANCELLED: ['수집 취소', 'neutral'],
   SKIPPED: ['수집 건너뜀', 'warning'],
-}
-const reasons: Record<string, string> = {
-  PR_LIMIT_EXCEEDED: '수집 가능한 PR 수를 초과했습니다.',
-  PATCH_OMITTED: '일부 변경 내역이 누락되었습니다.',
 }
 export function ProjectRepositoryCards({
   project,
@@ -75,6 +74,9 @@ export function ProjectRepositoryCards({
         )
         const targetState = data?.repositoryStatuses?.find(
           (r) => r.repositoryId === repo.repositoryId,
+        )
+        const collectionNotices = getCollectionNotices(
+          targetState?.incompleteReasons,
         )
         const [label, tone] =
           repo.accessStatus === 'INACCESSIBLE'
@@ -153,13 +155,18 @@ export function ProjectRepositoryCards({
                 프로젝트에서 제거
               </MenuItem>
             </Menu>
-            {targetState?.incompleteReasons.length ? (
-              <p className="basis-full text-xs text-warning">
-                수집 근거 제한:{' '}
-                {targetState.incompleteReasons
-                  .map((reason) => reasons[reason] ?? reason)
-                  .join(' · ')}
-              </p>
+            {collectionNotices.length ? (
+              <CollectionNotice
+                notices={collectionNotices}
+                className="basis-full"
+              >
+                <RepositoryExcludedFiles
+                  projectId={project.id}
+                  repositoryId={repo.repositoryId}
+                  analysisRunId={targetState?.analysisRunId}
+                  reasons={targetState?.incompleteReasons ?? []}
+                />
+              </CollectionNotice>
             ) : null}
           </Card>
         )
