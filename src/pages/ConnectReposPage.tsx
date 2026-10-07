@@ -32,7 +32,6 @@ import {
   resolveRepository,
 } from '../features/repositories/api'
 import { projectAnalysis } from '../features/projects/projectAnalysis'
-import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { repositoryKeys } from '../features/repositories/keys'
 import { ONBOARDING_STEPS } from '../features/projects/onboardingSteps'
 import {
@@ -72,7 +71,6 @@ function failureMessage(reason: string) {
 }
 
 export function ConnectReposPage() {
-  useDocumentTitle('저장소 연결')
   const navigate = useNavigate()
   const { projectId } = useParams()
   const [searchParams] = useSearchParams()

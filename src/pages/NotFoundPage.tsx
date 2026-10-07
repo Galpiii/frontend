@@ -1,9 +1,7 @@
 import { Link } from 'react-router'
 import { Brand } from '../components/layout'
-import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 export function NotFoundPage() {
-  useDocumentTitle('페이지를 찾을 수 없습니다')
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-6 text-center break-keep">
       <Brand size="landing" />

@@ -26,7 +26,6 @@ import {
   type Tone,
   type ToastMessage,
 } from '../components/ui'
-import { useDocumentTitle } from '../lib/useDocumentTitle'
 
 const statuses: { tone: Tone; label: string }[] = [
   { tone: 'neutral', label: '분석 전' },
@@ -53,7 +52,6 @@ const repositories = [
   },
 ]
 export function ComponentPreview() {
-  useDocumentTitle('컴포넌트 미리보기')
   const [tab, setTab] = useState('components')
   const [filter, setFilter] = useState('전체 저장소')
   const [overlay, setOverlay] = useState<'modal' | 'drawer' | null>(null)

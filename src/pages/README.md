@@ -25,7 +25,7 @@
 | `/preview`                          | `ComponentPreview`  | dev builds only                                          |
 | `*`                                 | `NotFoundPage`      | —                                                        |
 
-While auth is still resolving, `App` renders a loading screen instead of the route tree, so a guard never decides on an unknown session. Each screen sets its own tab title with `useDocumentTitle`. Add authenticated screens as children of the `RequireAuth` route; they need no sign-in wiring of their own.
+While auth is still resolving, `App` renders a loading screen instead of the route tree, so a guard never decides on an unknown session. All screens share the tab title `갈피`, set in `index.html`. Add authenticated screens as children of the `RequireAuth` route; they need no sign-in wiring of their own.
 
 ## Authentication state
 

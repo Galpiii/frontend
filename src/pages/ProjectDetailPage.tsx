@@ -24,7 +24,6 @@ import {
   SectionHeader,
   StatCard,
 } from '../components/ui'
-import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { usePolling } from '../lib/usePolling'
 import { NewProjectPage } from './NewProjectPage'
 import { resumeOnboardingStep } from '../features/projects/onboardingSteps'
@@ -86,9 +85,6 @@ function ProjectHome({ projectId }: { projectId: number }) {
     useMatchedFeatures(tab === 'home' ? project : undefined),
   )
   const openSpec = () => navigate(`/projects/${projectId}?tab=match`)
-  useDocumentTitle(
-    notFound ? '프로젝트를 찾을 수 없습니다' : (project?.name ?? '프로젝트'),
-  )
   useEffect(() => {
     void projectAnalysis.consume(projectId)
     void projectAnalysis.refresh(projectId)

@@ -5,7 +5,6 @@ import { AppHeader, AppShell } from '../components/layout'
 import { Alert, Button, Card, Input, Modal, Stepper } from '../components/ui'
 import { authenticatedFetch, SessionError } from '../features/auth/session'
 import { projectPaths } from '../lib/api'
-import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { cn } from '../lib/cn'
 import { createProject, skipProjectSpec } from '../features/projects/api'
 import { useAnalysisStart } from '../features/consent/useAnalysisStart'
@@ -39,7 +38,6 @@ export function NewProjectPage({
 }: {
   project?: { id: number; name: string }
 }) {
-  useDocumentTitle(project ? '프로젝트 생성 이어하기' : '새 프로젝트')
   const navigate = useNavigate()
   const fileInput = useRef<HTMLInputElement>(null)
   const consent = useAnalysisStart()

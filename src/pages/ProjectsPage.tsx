@@ -33,7 +33,6 @@ import {
 } from '../features/projects/api'
 import { cn } from '../lib/cn'
 import { projectAnalysis } from '../features/projects/projectAnalysis'
-import { useDocumentTitle } from '../lib/useDocumentTitle'
 import { projectKeys } from '../features/projects/keys'
 
 /** A run in one of these states is still working; requesting another is not safe. */
@@ -68,7 +67,6 @@ function formatDate(value: string) {
 
 export function ProjectsPage() {
   const analysis = useAnalysisStart()
-  useDocumentTitle('프로젝트')
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
